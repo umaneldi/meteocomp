@@ -50,7 +50,7 @@ func TestRunPollsImmediatelyAndLogs(t *testing.T) {
 
 	var logs syncBuffer
 	locs := []weather.Location{{Name: "paris"}, {Name: "oslo"}}
-	p := New([]Job{{Provider: fakeProvider{fail: map[string]bool{"oslo": true}}, Interval: time.Hour}},
+	p := New([]weather.Provider{fakeProvider{fail: map[string]bool{"oslo": true}}}, time.Hour,
 		locs, st, slog.New(slog.NewTextHandler(&logs, nil)))
 
 	done := make(chan struct{})
@@ -85,5 +85,47 @@ func TestRunPollsImmediatelyAndLogs(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing log %q in:\n%s", want, out)
 		}
+	}
+}
+
+// A provider polled less than an interval ago is not polled again at startup;
+// its schedule resumes from the last poll.
+func TestRunResumesFromLastPoll(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st, err := store.OpenSQLite(ctx, filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	recent := time.Now().UTC().Add(-10 * time.Minute)
+	if _, err := st.RecordPoll(ctx, store.PollResult{Provider: "fake", ProviderType: "faketype",
+		Location: weather.Location{Name: "paris"}, StartedAt: recent, FinishedAt: recent}); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs syncBuffer
+	p := New([]weather.Provider{fakeProvider{}}, time.Hour, []weather.Location{{Name: "paris"}}, st,
+		slog.New(slog.NewTextHandler(&logs, nil)))
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { p.RunUntil(ctx, stop); close(done) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), "next provider poll scheduled") {
+		if time.Now().After(deadline) {
+			t.Fatalf("schedule not logged; logs:\n%s", logs.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(stop)
+	<-done
+
+	if strings.Contains(logs.String(), "provider poll started") {
+		t.Errorf("provider polled although its last poll is recent:\n%s", logs.String())
+	}
+	want := recent.Add(time.Hour).Format(time.RFC3339)
+	if !strings.Contains(logs.String(), "next_poll_at="+want) {
+		t.Errorf("expected next_poll_at=%s in:\n%s", want, logs.String())
 	}
 }

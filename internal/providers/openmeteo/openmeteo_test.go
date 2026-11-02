@@ -31,6 +31,9 @@ const fixture = `{
 
 func TestFetch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/forecast" || r.URL.Query().Has("models") {
+			t.Errorf("unexpected path or models: %s", r.URL)
+		}
 		if r.URL.Query().Get("latitude") != "48.85" || r.URL.Query().Get("forecast_days") != "2" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
@@ -63,5 +66,50 @@ func TestFetch(t *testing.T) {
 	d := got[2]
 	if d.Granularity != weather.GranularityDaily || *d.TemperatureMaxC != 11.2 || *d.SnowfallCm != 1.4 || d.Condition != weather.ConditionSnow {
 		t.Errorf("daily: %+v", d)
+	}
+}
+
+// The meteofrance endpoint returns null rows past the model horizon; they must be dropped.
+const meteofranceFixture = `{
+  "hourly": {
+    "time": ["2026-11-05T23:00", "2026-11-06T00:00"],
+    "temperature_2m": [9.1, null],
+    "weather_code": [3, null]
+  },
+  "daily": {
+    "time": ["2026-11-05", "2026-11-06"],
+    "weather_code": [3, null],
+    "temperature_2m_max": [10.8, null]
+  }
+}`
+
+func TestFetchEndpointAndModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/meteofrance" || r.URL.Query().Get("models") != "arome_france" {
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		w.Write([]byte(meteofranceFixture))
+	}))
+	defer srv.Close()
+
+	p, err := New(config.ProviderConfig{Name: "mf", BaseURL: srv.URL,
+		Options: map[string]any{"endpoint": "meteofrance", "models": "arome_france"}}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Fetch(context.Background(), weather.Location{Name: "paris", Latitude: 48.85, Longitude: 2.35})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Granularity != weather.GranularityHourly || got[1].Granularity != weather.GranularityDaily {
+		t.Fatalf("expected one hourly and one daily forecast, got %+v", got)
+	}
+}
+
+func TestInvalidEndpoint(t *testing.T) {
+	for _, ep := range []string{"../forecast", "forecast?x=1", "Meteo France"} {
+		if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"endpoint": ep}}, http.DefaultClient); err == nil {
+			t.Errorf("endpoint %q: expected error", ep)
+		}
 	}
 }

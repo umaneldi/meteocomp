@@ -1,0 +1,14 @@
+# Only what the build needs goes into the context.
+.git
+.github
+.dockerignore
+Dockerfile
+bin/
+/meteocomp
+*.db
+*.db-shm
+*.db-wal
+config.yaml
+!docker/config.yaml
+.env
+*.md

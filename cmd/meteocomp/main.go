@@ -1,5 +1,5 @@
 // Command meteocomp polls the configured weather providers, stores every
-// forecast in a database and serves them over an HTTP API.
+// forecast in a database and serves them over an HTTP API and a settings web UI.
 package main
 
 import (
@@ -11,74 +11,95 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/yanndethe/meteocomp/internal/api"
 	"github.com/yanndethe/meteocomp/internal/config"
 	"github.com/yanndethe/meteocomp/internal/poller"
-	"github.com/yanndethe/meteocomp/internal/providers"
 	_ "github.com/yanndethe/meteocomp/internal/providers/all"
 	"github.com/yanndethe/meteocomp/internal/store"
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to the YAML configuration file")
+	configPath := flag.String("config", os.Getenv("METEOCOMP_CONFIG"),
+		"optional YAML file used to seed the settings of an empty database (env METEOCOMP_CONFIG)")
+	addr := flag.String("addr", os.Getenv("METEOCOMP_HTTP_ADDR"), "HTTP listen address (env METEOCOMP_HTTP_ADDR, default :8080)")
+	dbPath := flag.String("db", os.Getenv("METEOCOMP_DB_PATH"), "SQLite database path (env METEOCOMP_DB_PATH, default meteocomp.db)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(*configPath, log); err != nil {
+	if err := run(*configPath, *addr, *dbPath, log); err != nil {
 		log.Error("fatal", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(configPath string, log *slog.Logger) error {
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return err
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
 	}
+	return ""
+}
+
+func run(configPath, addr, dbPath string, log *slog.Logger) error {
+	var seed *config.Config
+	if configPath != "" {
+		var err error
+		if seed, err = config.Load(configPath); err != nil {
+			return err
+		}
+		addr = firstNonEmpty(addr, seed.HTTP.Addr)
+		dbPath = firstNonEmpty(dbPath, seed.Database.Path)
+	}
+	addr = firstNonEmpty(addr, ":8080")
+	dbPath = firstNonEmpty(dbPath, "meteocomp.db")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.OpenSQLite(ctx, cfg.Database.Path)
+	st, err := store.OpenSQLite(ctx, dbPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
-	var jobs []poller.Job
-	for _, pc := range cfg.Providers {
-		if !pc.IsEnabled() {
-			log.Info("provider disabled", "provider", pc.Name)
-			continue
+	pollers := poller.NewManager(ctx)
+	apiSrv := api.New(ctx, st, pollers, log)
+
+	// The database is the source of truth. The config file (or built-in defaults)
+	// only seeds it on first start.
+	saved, found, err := st.LoadSettings(ctx)
+	switch {
+	case err != nil:
+		return err
+	case found:
+		if seed != nil {
+			log.Info("settings already stored in the database; ignoring config file", "config", configPath)
 		}
-		p, err := providers.New(pc)
-		if err != nil {
-			return err
-		}
-		jobs = append(jobs, poller.Job{Provider: p, Interval: pc.Interval})
-		log.Info("provider enabled", "provider", pc.Name, "type", pc.Type, "interval", pc.Interval)
+		err = apiSrv.ApplySettings(ctx, *saved, false, false)
+	case seed != nil:
+		log.Info("seeding settings from config file", "config", configPath)
+		err = apiSrv.ApplySettings(ctx, seed.Settings, true, false)
+	default:
+		log.Info("no stored settings; starting with defaults, configure them in the web UI")
+		err = apiSrv.ApplySettings(ctx, config.DefaultSettings(), true, false)
 	}
-	if len(jobs) == 0 {
-		log.Warn("no enabled providers; only the HTTP API will run")
+	if err != nil {
+		return err
 	}
 
-	pl := poller.New(jobs, cfg.Locations, st, log)
 	srv := &http.Server{
-		Addr:              cfg.HTTP.Addr,
-		Handler:           api.New(ctx, cfg, st, pl, log).Handler(),
+		Addr:              addr,
+		Handler:           apiSrv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	var wg sync.WaitGroup
-	wg.Go(func() { pl.Run(ctx) })
-
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("http server listening", "addr", cfg.HTTP.Addr)
+		log.Info("http server listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- fmt.Errorf("http server: %w", err)
 		}
@@ -94,6 +115,6 @@ func run(configPath string, log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
-	wg.Wait()
+	pollers.Wait()
 	return err
 }

@@ -6,6 +6,6 @@ test:
 	go test ./...
 
 run:
-	go run ./cmd/meteocomp -config config.yaml
+	go run ./cmd/meteocomp
 
 .PHONY: build test run

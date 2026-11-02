@@ -20,7 +20,13 @@ const (
 	defaultBaseURL = "https://api.openweathermap.org/data/2.5/forecast"
 )
 
-func init() { providers.Register(Type, New) }
+func init() {
+	providers.Register(Type, New, providers.Info{
+		Description:    "OpenWeatherMap 5 day / 3 hour forecast (free plan).",
+		RequiresAPIKey: true,
+		SignupURL:      "https://home.openweathermap.org/api_keys",
+	})
+}
 
 type Provider struct {
 	name    string

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>meteocomp · settings</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23d9480f' stroke-width='3'/%3E%3Cpath d='M16 2v5M16 25v5M2 16h5M25 16h5' stroke='%23d9480f' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="wrap masthead-row">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="9" />
+          <path d="M16 2v5M16 25v5M2 16h5M25 16h5" />
+        </svg>
+        <div>
+          <h1>meteocomp</h1>
+          <p class="tagline">Forecast comparison station · settings</p>
+        </div>
+      </div>
+      <nav class="jump" aria-label="Sections">
+        <a href="#polling">Polling</a>
+        <a href="#locations">Locations</a>
+        <a href="#providers">Providers</a>
+        <a href="#activity">Activity</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap" id="main" aria-busy="true">
+    <p class="loading" id="loading">Loading settings…</p>
+
+    <section id="polling" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">01</span>
+        <div>
+          <h2>Polling interval</h2>
+          <p class="hint">Shared by every provider. After a change, each provider resumes from its last poll, so saving never causes an extra burst of API calls.</p>
+        </div>
+      </header>
+      <div class="interval-row">
+        <div class="presets" role="group" aria-label="Interval presets" id="interval-presets"></div>
+        <label class="field interval-custom">
+          <span>Custom</span>
+          <input id="interval" type="text" inputmode="text" spellcheck="false" autocomplete="off" placeholder="e.g. 45m, 2h30m" aria-describedby="interval-help">
+        </label>
+      </div>
+      <p class="hint small" id="interval-help">Go duration syntax: <code>m</code> minutes, <code>h</code> hours. Minimum <code>1m</code>.</p>
+    </section>
+
+    <section id="locations" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">02</span>
+        <div>
+          <h2>Locations</h2>
+          <p class="hint">Every enabled provider is polled for every location. The name identifies a location in stored data; keep it stable.</p>
+        </div>
+      </header>
+      <div class="search">
+        <label class="field grow">
+          <span>Find a place</span>
+          <input id="geo-q" type="search" placeholder="City name, e.g. Lyon" autocomplete="off" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-controls="geo-results" aria-autocomplete="list">
+        </label>
+        <button type="button" class="btn ghost" id="add-location">Add manually</button>
+      </div>
+      <ul class="geo-results" id="geo-results" role="listbox" hidden></ul>
+      <p class="hint small">Place search uses the Open-Meteo geocoding service from your browser.</p>
+      <div class="table-wrap">
+        <table class="grid" id="locations-table">
+          <thead>
+            <tr><th>Name</th><th>City</th><th>Country</th><th class="num">Latitude</th><th class="num">Longitude</th><th><span class="sr">Actions</span></th></tr>
+          </thead>
+          <tbody id="locations-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="locations-empty" hidden>No locations yet. Find a place above to start collecting forecasts.</p>
+    </section>
+
+    <section id="providers" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">03</span>
+        <div>
+          <h2>Providers</h2>
+          <p class="hint">Instances of a provider type. Add the same type several times to compare endpoints or keys. API keys are write-only: they are never sent back to the browser.</p>
+        </div>
+      </header>
+      <div class="cards" id="provider-cards"></div>
+      <button type="button" class="btn ghost" id="add-provider">Add provider</button>
+    </section>
+
+    <section id="activity" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">04</span>
+        <div>
+          <h2>Recent activity</h2>
+          <p class="hint">Latest polls, refreshed automatically. New locations are picked up at each provider's next poll — or poll now.</p>
+        </div>
+        <button type="button" class="btn" id="poll-all">Poll all now</button>
+      </header>
+      <div class="table-wrap">
+        <table class="grid compact">
+          <thead>
+            <tr><th>When</th><th>Provider</th><th>Location</th><th>Status</th><th class="num">Points</th><th class="num">Duration</th></tr>
+          </thead>
+          <tbody id="polls-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="polls-empty" hidden>No polls recorded yet.</p>
+    </section>
+  </main>
+
+  <div class="savebar" id="savebar" hidden>
+    <div class="wrap savebar-row">
+      <p class="savebar-msg" id="savebar-msg" role="status" aria-live="polite">Unsaved changes</p>
+      <div class="savebar-actions">
+        <button type="button" class="btn ghost" id="discard">Discard</button>
+        <button type="button" class="btn primary" id="save">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

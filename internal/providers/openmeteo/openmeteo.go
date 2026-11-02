@@ -2,7 +2,16 @@
 // No API key is required.
 //
 // Options:
+//   - endpoint (string, default "forecast"): Open-Meteo API endpoint, i.e. the path
+//     after /v1/. "forecast" blends the best models for the location; model-specific
+//     endpoints include "meteofrance" (Météo-France AROME + ARPEGE, about 4 days),
+//     "dwd-icon", "gfs", "ecmwf", "metno", "gem", "jma"...
+//   - models (string, optional): comma-separated Open-Meteo model names passed as the
+//     "models" query parameter, e.g. "arome_france" on the meteofrance endpoint.
 //   - forecast_days (int, default 7, max 16)
+//
+// Endpoints only return the variables and days their models cover. Points with no
+// value at all (e.g. beyond the model horizon) are dropped.
 package openmeteo
 
 import (
@@ -10,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -19,28 +29,48 @@ import (
 )
 
 const (
-	Type           = "openmeteo"
-	defaultBaseURL = "https://api.open-meteo.com/v1/forecast"
+	Type            = "openmeteo"
+	defaultBaseURL  = "https://api.open-meteo.com/v1"
+	defaultEndpoint = "forecast"
 )
 
-func init() { providers.Register(Type, New) }
+var endpointRE = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+func init() {
+	providers.Register(Type, New, providers.Info{
+		Description: "Open-Meteo forecast API. No API key. Use the endpoint option to target a specific weather service.",
+		Options: []providers.Option{
+			{Name: "endpoint", Kind: "string", Default: defaultEndpoint,
+				Description: `API path after /v1/: "forecast" (best models blend), "meteofrance", "dwd-icon", "gfs", "ecmwf", "metno"...`},
+			{Name: "models", Kind: "string", Description: `Optional comma-separated model names, e.g. "arome_france"`},
+			{Name: "forecast_days", Kind: "int", Default: "7", Description: "Days of forecast, 1-16"},
+		},
+	})
+}
 
 type Provider struct {
 	name         string
-	baseURL      string
+	url          string // base URL + "/" + endpoint
+	models       string
 	forecastDays int
 	client       *http.Client
 }
 
 func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, error) {
+	base := cfg.BaseURL
+	if base == "" {
+		base = defaultBaseURL
+	}
+	endpoint := cfg.StringOption("endpoint", defaultEndpoint)
+	if !endpointRE.MatchString(endpoint) {
+		return nil, fmt.Errorf("provider %q: invalid endpoint %q (expected e.g. \"forecast\" or \"meteofrance\")", cfg.Name, endpoint)
+	}
 	p := &Provider{
 		name:         cfg.Name,
-		baseURL:      cfg.BaseURL,
+		url:          base + "/" + endpoint,
+		models:       cfg.StringOption("models", ""),
 		forecastDays: cfg.IntOption("forecast_days", 7),
 		client:       client,
-	}
-	if p.baseURL == "" {
-		p.baseURL = defaultBaseURL
 	}
 	if p.forecastDays < 1 || p.forecastDays > 16 {
 		return nil, fmt.Errorf("provider %q: forecast_days must be between 1 and 16", cfg.Name)
@@ -104,9 +134,12 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 	q.Set("timezone", "UTC")
 	q.Set("wind_speed_unit", "kmh")
 	q.Set("forecast_days", strconv.Itoa(p.forecastDays))
+	if p.models != "" {
+		q.Set("models", p.models)
+	}
 
 	var r response
-	if err := providers.GetJSON(ctx, p.client, p.baseURL+"?"+q.Encode(), &r); err != nil {
+	if err := providers.GetJSON(ctx, p.client, p.url+"?"+q.Encode(), &r); err != nil {
 		return nil, err
 	}
 
@@ -138,7 +171,9 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			f.VisibilityKm = new(*v / 1000)
 		}
 		setCondition(&f, atInt(h.WeatherCode, i))
-		out = append(out, f)
+		if !isEmpty(f) {
+			out = append(out, f)
+		}
 	}
 
 	d := r.Daily
@@ -162,9 +197,30 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			UVIndex:                     at(d.UVIndexMax, i),
 		}
 		setCondition(&f, atInt(d.WeatherCode, i))
-		out = append(out, f)
+		if !isEmpty(f) {
+			out = append(out, f)
+		}
 	}
 	return out, nil
+}
+
+// isEmpty reports whether f carries no value at all, which happens past the
+// horizon of the models behind the endpoint.
+func isEmpty(f weather.Forecast) bool {
+	if f.ConditionCode != "" {
+		return false
+	}
+	for _, v := range []*float64{
+		f.TemperatureC, f.TemperatureMinC, f.TemperatureMaxC, f.FeelsLikeC, f.HumidityPct,
+		f.DewPointC, f.PressureHPa, f.WindSpeedKmh, f.WindGustKmh, f.WindDirectionDeg,
+		f.CloudCoverPct, f.PrecipitationMm, f.PrecipitationProbabilityPct, f.SnowfallCm,
+		f.UVIndex, f.VisibilityKm,
+	} {
+		if v != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func at(s []*float64, i int) *float64 {

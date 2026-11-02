@@ -1,9 +1,17 @@
-// Package config loads and validates the service configuration.
+// Package config defines the service settings, loads the optional YAML seed file
+// and validates settings.
+//
+// Runtime settings (poll interval, locations, providers and their API keys) are
+// persisted in the database and edited from the web UI. The YAML file is optional
+// and only used to seed an empty database (e.g. for automated tests).
 package config
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,13 +19,17 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-// Config is the root configuration.
+// DefaultPollInterval is used when no interval is set.
+const DefaultPollInterval = time.Hour
+
+// MinPollInterval is the shortest accepted poll interval.
+const MinPollInterval = time.Minute
+
+// Config is the root of the optional YAML file.
 type Config struct {
-	HTTP            HTTPConfig         `yaml:"http"`
-	Database        DatabaseConfig     `yaml:"database"`
-	DefaultInterval time.Duration      `yaml:"default_interval"`
-	Locations       []weather.Location `yaml:"locations"`
-	Providers       []ProviderConfig   `yaml:"providers"`
+	HTTP     HTTPConfig     `yaml:"http"`
+	Database DatabaseConfig `yaml:"database"`
+	Settings `yaml:",inline"`
 }
 
 type HTTPConfig struct {
@@ -28,27 +40,66 @@ type DatabaseConfig struct {
 	Path string `yaml:"path"`
 }
 
+// Settings are the runtime settings persisted in the database.
+type Settings struct {
+	// PollInterval is shared by all providers.
+	PollInterval time.Duration      `yaml:"poll_interval"`
+	Locations    []weather.Location `yaml:"locations"`
+	Providers    []ProviderConfig   `yaml:"providers"`
+}
+
 // ProviderConfig describes one provider instance. The same Type may be used by
-// several instances (e.g. two API keys or different intervals).
+// several instances (e.g. two API keys or different endpoints).
 type ProviderConfig struct {
-	Name     string         `yaml:"name"`
-	Type     string         `yaml:"type"`
-	APIKey   string         `yaml:"api_key"`
-	BaseURL  string         `yaml:"base_url"` // optional override, mainly for tests
-	Interval time.Duration  `yaml:"interval"` // falls back to Config.DefaultInterval
-	Enabled  *bool          `yaml:"enabled"`  // defaults to true
-	Options  map[string]any `yaml:"options"`  // provider-specific options
+	Name    string         `yaml:"name"`
+	Type    string         `yaml:"type"`
+	APIKey  string         `yaml:"api_key"`
+	BaseURL string         `yaml:"base_url"` // optional override, mainly for tests
+	Enabled *bool          `yaml:"enabled"`  // defaults to true
+	Options map[string]any `yaml:"options"`  // provider-specific options
 }
 
 // IsEnabled reports whether the provider should be polled.
 func (p ProviderConfig) IsEnabled() bool { return p.Enabled == nil || *p.Enabled }
 
 // IntOption returns an integer option or def if absent or not an integer.
+// Whole floats are accepted because options stored as JSON decode to float64.
 func (p ProviderConfig) IntOption(key string, def int) int {
-	if v, ok := p.Options[key].(int); ok {
+	switch v := p.Options[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		if v == math.Trunc(v) {
+			return int(v)
+		}
+	}
+	return def
+}
+
+// StringOption returns a string option or def if absent, empty or not a string.
+func (p ProviderConfig) StringOption(key, def string) string {
+	if v, ok := p.Options[key].(string); ok && v != "" {
 		return v
 	}
 	return def
+}
+
+// DefaultSettings are used when neither the database nor a seed file provide settings.
+// Open-Meteo needs no key so it is enabled; keyed providers wait for an API key.
+func DefaultSettings() Settings {
+	return Settings{
+		PollInterval: DefaultPollInterval,
+		Locations:    []weather.Location{},
+		Providers: []ProviderConfig{
+			{Name: "open-meteo", Type: "openmeteo", Enabled: new(true), Options: map[string]any{"forecast_days": 7}},
+			{Name: "meteofrance", Type: "openmeteo", Enabled: new(false),
+				Options: map[string]any{"endpoint": "meteofrance", "forecast_days": 4}},
+			{Name: "owm", Type: "openweathermap", Enabled: new(false)},
+			{Name: "weatherapi", Type: "weatherapi", Enabled: new(false), Options: map[string]any{"days": 3}},
+		},
+	}
 }
 
 // Load reads the YAML file at path, expands ${ENV_VARS}, applies defaults and validates.
@@ -60,42 +111,65 @@ func Load(path string) (*Config, error) {
 	return Parse(raw)
 }
 
-// Parse parses YAML bytes, expands ${ENV_VARS}, applies defaults and validates.
+// Parse parses YAML bytes, expands ${ENV_VARS} (and ${ENV_VARS:-default}),
+// applies defaults and validates.
 func Parse(raw []byte) (*Config, error) {
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(raw))), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(ExpandEnv(string(raw))), &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
+	cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
-func (c *Config) applyDefaults() {
-	if c.HTTP.Addr == "" {
-		c.HTTP.Addr = ":8080"
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}`)
+
+// ExpandEnv replaces ${VAR} with the environment value and ${VAR:-def} with the
+// value or def when VAR is unset or empty.
+func ExpandEnv(s string) string {
+	return envRef.ReplaceAllStringFunc(s, func(m string) string {
+		g := envRef.FindStringSubmatch(m)
+		if v := os.Getenv(g[1]); v != "" || g[2] == "" {
+			return v
+		}
+		return g[3]
+	})
+}
+
+// Normalize applies defaults in place.
+func (s *Settings) Normalize() {
+	if s.PollInterval == 0 {
+		s.PollInterval = DefaultPollInterval
 	}
-	if c.Database.Path == "" {
-		c.Database.Path = "meteocomp.db"
+	if s.Locations == nil {
+		s.Locations = []weather.Location{}
 	}
-	if c.DefaultInterval == 0 {
-		c.DefaultInterval = time.Hour
+	if s.Providers == nil {
+		s.Providers = []ProviderConfig{}
 	}
-	for i := range c.Providers {
-		if c.Providers[i].Interval == 0 {
-			c.Providers[i].Interval = c.DefaultInterval
+	for i := range s.Locations {
+		l := &s.Locations[i]
+		l.Name, l.City, l.Country = strings.TrimSpace(l.Name), strings.TrimSpace(l.City), strings.TrimSpace(l.Country)
+	}
+	for i := range s.Providers {
+		p := &s.Providers[i]
+		p.Name, p.Type, p.APIKey = strings.TrimSpace(p.Name), strings.TrimSpace(p.Type), strings.TrimSpace(p.APIKey)
+		if p.Enabled == nil {
+			p.Enabled = new(true)
 		}
 	}
 }
 
-func (c *Config) validate() error {
-	if len(c.Locations) == 0 {
-		return fmt.Errorf("config: at least one location is required")
+// Validate checks the settings. Errors are prefixed with "config:".
+func (s *Settings) Validate() error {
+	if s.PollInterval < MinPollInterval {
+		return fmt.Errorf("config: poll interval must be at least %s", MinPollInterval)
 	}
 	seen := map[string]bool{}
-	for i, l := range c.Locations {
+	for i, l := range s.Locations {
 		if l.Name == "" {
 			return fmt.Errorf("config: locations[%d]: name is required", i)
 		}
@@ -108,7 +182,7 @@ func (c *Config) validate() error {
 		}
 	}
 	seen = map[string]bool{}
-	for i, p := range c.Providers {
+	for i, p := range s.Providers {
 		if p.Name == "" {
 			return fmt.Errorf("config: providers[%d]: name is required", i)
 		}
@@ -119,9 +193,6 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: duplicate provider name %q", p.Name)
 		}
 		seen[p.Name] = true
-		if p.Interval < time.Minute {
-			return fmt.Errorf("config: provider %q: interval must be at least 1m", p.Name)
-		}
 	}
 	return nil
 }

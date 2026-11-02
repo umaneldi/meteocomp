@@ -6,33 +6,90 @@ poll and forecast to a database, and serves them over a JSON API so providers ca
 ## Quick start
 
 ```sh
-cp config.example.yaml config.yaml   # edit locations/providers; set API keys via env vars
-make run                             # or: go run ./cmd/meteocomp -config config.yaml
+make run          # or: go run ./cmd/meteocomp
 ```
 
-Open-Meteo needs no API key, so the example config works out of the box.
+Open http://localhost:8080/ and configure everything from the web UI:
+
+- **Polling interval** — shared by all providers (minimum `1m`).
+- **Locations** — search a place (Open-Meteo geocoding, from the browser) or enter coordinates.
+- **Providers** — enable/disable instances, add several of the same type, set options and
+  provision API keys. Keys are write-only: the API only reports whether a key is set.
+
+Settings are persisted in the database. On first start the database is seeded with defaults
+(Open-Meteo enabled, keyed providers disabled, no locations). Saving restarts the poller; each
+provider resumes from its last recorded poll, so saving or restarting does not trigger extra API calls.
+Use *Poll now* to fetch immediately.
+
+> The UI and settings API have no authentication. Do not expose port 8080 publicly; put it
+> behind a reverse proxy with authentication or keep it on a private network.
+
+### Startup options
+
+| Flag | Env | Default |
+| --- | --- | --- |
+| `-addr` | `METEOCOMP_HTTP_ADDR` | `:8080` |
+| `-db` | `METEOCOMP_DB_PATH` | `meteocomp.db` |
+| `-config` | `METEOCOMP_CONFIG` | none |
+
+### Optional seed file (automated tests)
+
+`-config` / `METEOCOMP_CONFIG` points to a YAML file (see `config.example.yaml`) used **only when
+the database holds no settings yet**, e.g. for CI. Once settings are stored, the file is ignored and
+the web UI is the source of truth. `${VAR}` and `${VAR:-default}` are expanded.
+
+## Docker
+
+Images are published to `ghcr.io/yanndethe/meteocomp` (multi-arch, distroless, ~6 MB compressed)
+by `.github/workflows/docker.yml`: `latest` from the default branch and semver tags from `v*` git tags.
+
+```sh
+docker run -d -p 8080:8080 -v meteocomp-data:/data ghcr.io/yanndethe/meteocomp
+```
+
+then configure it at http://localhost:8080/. Settings and data live in `/data/meteocomp.db`.
+
+For automated tests the image also ships `docker/config.yaml`, an env-driven seed file that is
+only used when enabled explicitly:
+
+```sh
+docker run --rm -p 8080:8080 \
+  -e METEOCOMP_CONFIG=/etc/meteocomp/config.yaml \
+  -e METEOCOMP_LOCATIONS='[{name: lyon, city: Lyon, country: FR, latitude: 45.76, longitude: 4.83}]' \
+  -e OWM_ENABLED=true -e OWM_API_KEY=... \
+  ghcr.io/yanndethe/meteocomp
+```
+
+| Variable | Default |
+| --- | --- |
+| `METEOCOMP_POLL_INTERVAL` | `1h` |
+| `METEOCOMP_LOCATIONS` | `[]` (YAML flow sequence of locations) |
+| `OPENMETEO_ENABLED` / `OPENMETEO_FORECAST_DAYS` | `true` / `7` |
+| `METEOFRANCE_ENABLED` / `METEOFRANCE_FORECAST_DAYS` | `false` / `4` |
+| `OWM_ENABLED` / `OWM_API_KEY` | `false` / – |
+| `WEATHERAPI_ENABLED` / `WEATHERAPI_KEY` / `WEATHERAPI_DAYS` | `false` / – / `3` |
 
 ## Providers
 
 | type             | key | granularity       | options                          |
 |------------------|-----|-------------------|----------------------------------|
-| `openmeteo`      | no  | hourly + daily    | `forecast_days` (1-16, default 7) |
+| `openmeteo`      | no  | hourly + daily    | `endpoint` (default `forecast`), `models`, `forecast_days` (1-16, default 7) |
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
 | `weatherapi`     | yes | hourly + daily    | `days` (1-14, default 3)         |
-| `meteofrance`    | yes | 1h or 3h, ≤ 51h, France only | `horizon_hours` (1-51, default 48), `step_hours` (1 or 3, default 3), `requests_per_minute` (default 45), `grid` (`0025`/`001`) |
 
-`meteofrance` uses the AROME model through the official Météo-France API portal
-(WCS interface, key sent as `apikey` header; the key must be subscribed to the
-"AROME" API). The service returns one value per request and the quota is
-50 requests/minute, so polls take a few minutes per location. AROME has no weather
-code: the condition is derived from precipitation, snow fraction, visibility and
-cloud cover.
+`openmeteo` can target any Open-Meteo endpoint with the `endpoint` option (the path after
+`/v1/`): `forecast` (default) blends the best models for each location, while model-specific
+endpoints such as `meteofrance` (Météo-France AROME 2.5 km over France + ARPEGE, about 4 days),
+`dwd-icon`, `gfs`, `ecmwf` or `metno` return a single weather service's forecast. `models`
+optionally narrows it further (e.g. `arome_france`). Points beyond the models' horizon are dropped.
+Configure several `openmeteo` instances to compare weather services side by side.
 
 Any number of instances can be configured, including several of the same type.
 
 ## Database
 
-SQLite (`database.path`). Two tables:
+SQLite (`-db`). Settings tables (`settings`, `locations`, `providers`) hold the current
+configuration; they are replaced as a whole on each save. Data tables:
 
 - `polls` — one row per provider/location fetch: timestamps, duration, status (`ok`/`error`), error, forecast count.
 - `forecasts` — one row per forecast point: poll date, forecast date, granularity, lead time, provider,
@@ -47,7 +104,11 @@ See `internal/store/schema.sql` for the exact schema.
 
 | method | path                 | query parameters |
 |--------|----------------------|------------------|
+| GET    | `/`                  | settings web UI |
 | GET    | `/healthz`           | |
+| GET    | `/api/v1/settings`   | current settings; API keys reported as `has_api_key` / `api_key_hint` only |
+| PUT    | `/api/v1/settings`   | replace settings (see below) |
+| GET    | `/api/v1/provider-types` | available provider types, options and whether they need a key |
 | GET    | `/api/v1/providers`  | |
 | GET    | `/api/v1/locations`  | |
 | GET    | `/api/v1/polls`      | `provider`, `location`, `status`, `limit` |
@@ -55,3 +116,9 @@ See `internal/store/schema.sql` for the exact schema.
 | GET    | `/api/v1/forecasts`  | `provider`, `location`, `granularity`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit` |
 
 `limit` defaults to 500 (max 10000).
+
+`PUT /api/v1/settings` takes the same document as `GET` returns. Per provider, `api_key`
+is optional: omitted keeps the stored key, `""` removes it, any other value replaces it;
+`previous_name` keeps the key when an instance is renamed. Invalid settings (bad interval or
+coordinates, duplicate names, enabled provider without a required key, ...) return `400` and
+nothing is saved.

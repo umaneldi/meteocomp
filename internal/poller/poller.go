@@ -12,15 +12,10 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-// Job is a provider together with its polling interval.
-type Job struct {
-	Provider weather.Provider
-	Interval time.Duration
-}
-
-// Poller runs one goroutine per provider.
+// Poller runs one goroutine per provider, all sharing the same interval.
 type Poller struct {
-	jobs      []Job
+	providers []weather.Provider
+	interval  time.Duration
 	locations []weather.Location
 	store     store.Store
 	log       *slog.Logger
@@ -32,12 +27,13 @@ type Poller struct {
 	triggered sync.WaitGroup
 }
 
-func New(jobs []Job, locations []weather.Location, st store.Store, log *slog.Logger) *Poller {
-	mu := make(map[string]*sync.Mutex, len(jobs))
-	for _, j := range jobs {
-		mu[j.Provider.Name()] = &sync.Mutex{}
+func New(provs []weather.Provider, interval time.Duration, locations []weather.Location, st store.Store, log *slog.Logger) *Poller {
+	mu := make(map[string]*sync.Mutex, len(provs))
+	for _, p := range provs {
+		mu[p.Name()] = &sync.Mutex{}
 	}
-	return &Poller{jobs: jobs, locations: locations, store: st, log: log, timeout: time.Minute, mu: mu}
+	return &Poller{providers: provs, interval: interval, locations: locations, store: st, log: log,
+		timeout: time.Minute, mu: mu}
 }
 
 // Reason tells why a provider poll was started. It is included in logs.
@@ -49,24 +45,44 @@ const (
 	ReasonManual    Reason = "manual"
 )
 
-// Run polls each provider immediately at startup, then at its interval, until ctx is done.
-func (p *Poller) Run(ctx context.Context) {
-	p.log.Info("poller started", "providers", len(p.jobs), "locations", len(p.locations))
+// Run polls each provider until ctx is done. See RunUntil.
+func (p *Poller) Run(ctx context.Context) { p.RunUntil(ctx, nil) }
+
+// RunUntil polls each provider at the shared interval until ctx is done or stop
+// is closed. A provider whose last recorded poll is older than the interval (or
+// that was never polled) is polled immediately; otherwise its schedule resumes
+// from the last poll, so restarts and settings changes do not cause extra API calls.
+// Closing stop lets in-flight polls finish; cancelling ctx aborts them.
+func (p *Poller) RunUntil(ctx context.Context, stop <-chan struct{}) {
+	p.log.Info("poller started", "providers", len(p.providers), "locations", len(p.locations), "interval", p.interval)
+	last, err := p.store.LastPollTimes(ctx)
+	if err != nil {
+		p.log.Warn("read last poll times; polling all providers now", "error", err)
+	}
 	var wg sync.WaitGroup
-	for _, j := range p.jobs {
+	for _, prov := range p.providers {
 		wg.Go(func() {
-			p.PollProvider(ctx, j.Provider, ReasonStartup)
-			t := time.NewTicker(j.Interval)
-			defer t.Stop()
-			p.logNext(j)
+			delay, reason := time.Duration(0), ReasonStartup
+			if t, ok := last[prov.Name()]; ok {
+				if next := t.Add(p.interval); time.Until(next) > 0 {
+					delay, reason = time.Until(next), ReasonScheduled
+					p.logNext(prov, next)
+				}
+			}
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case <-t.C:
-					p.PollProvider(ctx, j.Provider, ReasonScheduled)
-					p.logNext(j)
+				case <-stop:
+					return
+				case <-timer.C:
 				}
+				p.PollProvider(ctx, prov, reason)
+				reason = ReasonScheduled
+				timer.Reset(p.interval)
+				p.logNext(prov, time.Now().Add(p.interval))
 			}
 		})
 	}
@@ -74,9 +90,9 @@ func (p *Poller) Run(ctx context.Context) {
 	p.triggered.Wait()
 }
 
-func (p *Poller) logNext(j Job) {
-	p.log.Info("next provider poll scheduled", "provider", j.Provider.Name(),
-		"interval", j.Interval, "next_poll_at", time.Now().Add(j.Interval).Format(time.RFC3339))
+func (p *Poller) logNext(prov weather.Provider, at time.Time) {
+	p.log.Info("next provider poll scheduled", "provider", prov.Name(),
+		"interval", p.interval, "next_poll_at", at.UTC().Format(time.RFC3339))
 }
 
 // Trigger starts an out-of-schedule poll of prov in the background.
@@ -84,14 +100,14 @@ func (p *Poller) Trigger(ctx context.Context, prov weather.Provider) {
 	p.triggered.Go(func() { p.PollProvider(ctx, prov, ReasonManual) })
 }
 
-// Jobs returns the configured provider jobs.
-func (p *Poller) Jobs() []Job { return p.jobs }
+// Providers returns the enabled providers.
+func (p *Poller) Providers() []weather.Provider { return p.providers }
 
 // Lookup returns the provider with the given instance name.
 func (p *Poller) Lookup(name string) (weather.Provider, bool) {
-	for _, j := range p.jobs {
-		if j.Provider.Name() == name {
-			return j.Provider, true
+	for _, prov := range p.providers {
+		if prov.Name() == name {
+			return prov, true
 		}
 	}
 	return nil, false
@@ -136,18 +152,8 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 	return failures
 }
 
-// fetchTimeouter is implemented by providers whose fetches take longer than
-// the default timeout (e.g. rate-limited APIs issuing many requests).
-type fetchTimeouter interface {
-	FetchTimeout() time.Duration
-}
-
 func (p *Poller) fetch(ctx context.Context, prov weather.Provider, loc weather.Location) store.PollResult {
-	timeout := p.timeout
-	if ft, ok := prov.(fetchTimeouter); ok {
-		timeout = max(timeout, ft.FetchTimeout())
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	res := store.PollResult{
 		Provider:     prov.Name(),

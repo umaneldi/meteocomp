@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/yanndethe/meteocomp/internal/config"
 	"github.com/yanndethe/meteocomp/internal/poller"
 	"github.com/yanndethe/meteocomp/internal/store"
 	"github.com/yanndethe/meteocomp/internal/weather"
+	"github.com/yanndethe/meteocomp/internal/web"
 )
 
 const (
@@ -22,20 +24,28 @@ const (
 )
 
 type Server struct {
-	cfg     *config.Config
 	store   store.Store
-	poller  *poller.Poller
+	pollers *poller.Manager
 	log     *slog.Logger
 	baseCtx context.Context // lifetime of the service; used for manually triggered polls
+
+	// mu guards settings and serializes ApplySettings.
+	mu       sync.RWMutex
+	settings config.Settings
 }
 
-func New(baseCtx context.Context, cfg *config.Config, st store.Store, p *poller.Poller, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, store: st, poller: p, log: log, baseCtx: baseCtx}
+// New returns a Server. Call ApplySettings before serving.
+func New(baseCtx context.Context, st store.Store, pm *poller.Manager, log *slog.Logger) *Server {
+	return &Server{store: st, pollers: pm, log: log, baseCtx: baseCtx}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("GET /", web.Handler())
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
+	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
+	mux.HandleFunc("GET /api/v1/provider-types", s.listProviderTypes)
 	mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	mux.HandleFunc("GET /api/v1/locations", s.listLocations)
 	mux.HandleFunc("GET /api/v1/polls", s.listPolls)
@@ -56,15 +66,16 @@ type providerView struct {
 }
 
 func (s *Server) listProviders(w http.ResponseWriter, _ *http.Request) {
-	out := make([]providerView, 0, len(s.cfg.Providers))
-	for _, p := range s.cfg.Providers {
-		out = append(out, providerView{Name: p.Name, Type: p.Type, Interval: p.Interval.String(), Enabled: p.IsEnabled()})
+	cur := s.Settings()
+	out := make([]providerView, 0, len(cur.Providers))
+	for _, p := range cur.Providers {
+		out = append(out, providerView{Name: p.Name, Type: p.Type, Interval: cur.PollInterval.String(), Enabled: p.IsEnabled()})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listLocations(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.cfg.Locations)
+	writeJSON(w, http.StatusOK, s.Settings().Locations)
 }
 
 func (s *Server) listPolls(w http.ResponseWriter, r *http.Request) {
@@ -90,23 +101,26 @@ func (s *Server) listPolls(w http.ResponseWriter, r *http.Request) {
 // triggerPoll starts an immediate poll of one provider (?provider=name) or all
 // enabled providers, in the background. It responds 202 Accepted.
 func (s *Server) triggerPoll(w http.ResponseWriter, r *http.Request) {
+	pl := s.pollers.Current()
+	if pl == nil {
+		writeError(w, http.StatusServiceUnavailable, fmt.Errorf("poller not started"))
+		return
+	}
 	var targets []weather.Provider
 	if name := r.URL.Query().Get("provider"); name != "" {
-		p, ok := s.poller.Lookup(name)
+		p, ok := pl.Lookup(name)
 		if !ok {
 			writeError(w, http.StatusNotFound, fmt.Errorf("unknown or disabled provider %q", name))
 			return
 		}
 		targets = append(targets, p)
 	} else {
-		for _, j := range s.poller.Jobs() {
-			targets = append(targets, j.Provider)
-		}
+		targets = pl.Providers()
 	}
 	names := make([]string, 0, len(targets))
 	for _, p := range targets {
 		names = append(names, p.Name())
-		s.poller.Trigger(s.baseCtx, p)
+		pl.Trigger(s.baseCtx, p)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "started", "providers": names})
 }

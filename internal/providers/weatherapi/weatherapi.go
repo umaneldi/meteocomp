@@ -23,7 +23,16 @@ const (
 	defaultBaseURL = "https://api.weatherapi.com/v1/forecast.json"
 )
 
-func init() { providers.Register(Type, New) }
+func init() {
+	providers.Register(Type, New, providers.Info{
+		Description:    "WeatherAPI.com hourly and daily forecast.",
+		RequiresAPIKey: true,
+		SignupURL:      "https://www.weatherapi.com/my/",
+		Options: []providers.Option{
+			{Name: "days", Kind: "int", Default: "3", Description: "Days of forecast, 1-14 (the free plan is limited to 3)"},
+		},
+	})
+}
 
 type Provider struct {
 	name    string

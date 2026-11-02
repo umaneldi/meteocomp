@@ -10,19 +10,25 @@ database table/column names, test data descriptions and API payloads.
 
 meteocomp is a Go web service that polls any number of user-configured weather providers
 for a set of locations, stores every poll and every forecast data point in a database, and
-exposes them over an HTTP/JSON API. Rows are append-only so forecasts can be compared
-across providers and across lead times (how the forecast for a given time evolves).
+exposes them over an HTTP/JSON API. Poll and forecast rows are append-only so forecasts can be
+compared across providers and across lead times (how the forecast for a given time evolves).
+Settings (shared poll interval, locations, provider instances and API keys) are stored in the
+database and edited from an embedded web UI.
 
 ## Layout
 
-- `cmd/meteocomp` — entry point: loads config, opens the store, starts the poller and HTTP server.
+- `cmd/meteocomp` — entry point: opens the store, loads settings (DB, else optional seed file, else
+  defaults), starts the poller manager and HTTP server.
 - `internal/weather` — domain types: `Location`, `Forecast`, normalized `Condition`, `Provider` interface.
-- `internal/config` — YAML config loading (with `${ENV}` expansion), defaults and validation.
+- `internal/config` — `Settings` types, defaults and validation; optional YAML seed file loading
+  (with `${ENV}` / `${ENV:-default}` expansion), used only to seed an empty database (e.g. CI).
 - `internal/providers` — provider registry and shared HTTP helper; one sub-package per provider.
   `internal/providers/all` blank-imports every provider so they register themselves.
 - `internal/store` — `Store` interface and SQLite implementation (`schema.sql` is embedded).
-- `internal/poller` — one goroutine per provider instance, polling all locations at its interval.
-- `internal/api` — HTTP handlers.
+- `internal/poller` — one goroutine per provider instance, polling all locations at the shared interval,
+  resuming from the last recorded poll. `Manager` swaps pollers when settings change.
+- `internal/api` — HTTP handlers, including `GET/PUT /api/v1/settings` (API keys are write-only).
+- `internal/web` — embedded settings UI (`static/`, vanilla HTML/CSS/JS, no build step).
 
 ## Conventions
 
@@ -37,7 +43,8 @@ across providers and across lead times (how the forecast for a given time evolve
 ## Adding a provider
 
 1. Create `internal/providers/<type>/` implementing `weather.Provider`.
-2. Register it in `init()` with `providers.Register("<type>", New)`.
+2. Register it in `init()` with `providers.Register("<type>", New, providers.Info{...})`; `Info`
+   (description, API key requirement, options) drives the web UI.
 3. Add a blank import in `internal/providers/all/all.go`.
 4. Map provider condition codes to `weather.Condition`; convert units.
 5. Add a fixture-based test and document the type/options in `config.example.yaml` and `README.md`.
@@ -46,4 +53,4 @@ across providers and across lead times (how the forecast for a given time evolve
 
 - Build: `make build` (or `go build ./cmd/meteocomp`)
 - Test: `make test` (runs `go vet` and `go test ./...`)
-- Run: `cp config.example.yaml config.yaml && make run`
+- Run: `make run`, then open http://localhost:8080/ to configure.

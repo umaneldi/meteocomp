@@ -62,3 +62,31 @@ CREATE TABLE IF NOT EXISTS forecasts (
 CREATE INDEX IF NOT EXISTS idx_forecasts_provider_loc_time ON forecasts (provider, location_name, forecast_time);
 CREATE INDEX IF NOT EXISTS idx_forecasts_time ON forecasts (forecast_time);
 CREATE INDEX IF NOT EXISTS idx_forecasts_poll ON forecasts (poll_id);
+
+-- Runtime settings edited from the web UI. Only the latest state is kept.
+-- Known keys: poll_interval (Go duration string, shared by all providers).
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Locations to poll, in display order.
+CREATE TABLE IF NOT EXISTS locations (
+    name      TEXT    PRIMARY KEY,
+    position  INTEGER NOT NULL,
+    city      TEXT    NOT NULL DEFAULT '',
+    country   TEXT    NOT NULL DEFAULT '',
+    latitude  REAL    NOT NULL,
+    longitude REAL    NOT NULL
+);
+
+-- Provider instances, in display order.
+CREATE TABLE IF NOT EXISTS providers (
+    name     TEXT    PRIMARY KEY,               -- instance name, referenced by polls.provider
+    position INTEGER NOT NULL,
+    type     TEXT    NOT NULL,                  -- implementation, e.g. openmeteo
+    api_key  TEXT    NOT NULL DEFAULT '',
+    base_url TEXT    NOT NULL DEFAULT '',
+    enabled  INTEGER NOT NULL DEFAULT 1,
+    options  TEXT    NOT NULL DEFAULT '{}'      -- JSON object of provider-specific options
+);

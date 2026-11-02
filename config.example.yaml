@@ -1,25 +1,26 @@
-# Copy to config.yaml and adjust. ${ENV_VARS} are expanded at load time.
+# OPTIONAL seed file. Settings normally live in the database and are edited in
+# the web UI (http://localhost:8080/). This file is only read when passed with
+# -config / METEOCOMP_CONFIG, and only seeds a database that has no settings yet.
+# ${ENV_VARS} and ${ENV_VARS:-default} are expanded at load time.
 http:
-  addr: ":8080"
+  addr: ":8080"            # overridden by -addr / METEOCOMP_HTTP_ADDR
 database:
-  path: "meteocomp.db"
+  path: "meteocomp.db"     # overridden by -db / METEOCOMP_DB_PATH
 
-# Used by providers that do not set their own interval. Minimum 1m.
-default_interval: 1h
+# Shared by all providers. Minimum 1m.
+poll_interval: 1h
 
 locations:
   - { name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522 }
   - { name: london, city: London, country: GB, latitude: 51.5074, longitude: -0.1278 }
 
 # Any number of provider instances. The same type may appear several times
-# with different names, keys or intervals. Available types:
-#   openmeteo       no key needed;   options: forecast_days (1-16, default 7)
+# with different names, keys or options. Available types:
+#   openmeteo       no key needed;   options: endpoint (Open-Meteo API path after /v1/,
+#                   default "forecast"; e.g. "meteofrance", "dwd-icon", "gfs", "ecmwf"),
+#                   models (optional, e.g. "arome_france"), forecast_days (1-16, default 7)
 #   openweathermap  api_key needed;  5 day / 3 hour forecast
 #   weatherapi      api_key needed;  options: days (1-14, default 3)
-#   meteofrance     api_key needed (subscribed to the AROME API on portail-api.meteofrance.fr);
-#                   France/neighbouring area only; options: horizon_hours (1-51, default 48),
-#                   step_hours (1 or 3, default 3), requests_per_minute (1-50, default 45),
-#                   grid ("0025" or "001", default "0025")
 providers:
   - name: open-meteo
     type: openmeteo
@@ -28,7 +29,6 @@ providers:
   - name: owm
     type: openweathermap
     api_key: "${OWM_API_KEY}"
-    interval: 3h
     enabled: false
 
   - name: weatherapi
@@ -36,10 +36,8 @@ providers:
     api_key: "${WEATHERAPI_KEY}"
     enabled: false
 
-  # Slow: ~11 requests per time step and location under a 50 requests/minute quota
-  # (about 4 minutes per location with the defaults).
+  # Météo-France AROME (France) + ARPEGE through Open-Meteo, about 4 days, no key needed.
   - name: meteofrance
-    type: meteofrance
-    api_key: "${METEOFRANCE_API_KEY}"
-    interval: 3h
+    type: openmeteo
+    options: { endpoint: meteofrance, forecast_days: 4 }
     enabled: false

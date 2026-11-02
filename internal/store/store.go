@@ -1,10 +1,11 @@
-// Package store persists polls and forecasts.
+// Package store persists settings, polls and forecasts.
 package store
 
 import (
 	"context"
 	"time"
 
+	"github.com/yanndethe/meteocomp/internal/config"
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
@@ -14,6 +15,14 @@ type Store interface {
 	RecordPoll(ctx context.Context, r PollResult) (int64, error)
 	ListPolls(ctx context.Context, f PollFilter) ([]Poll, error)
 	ListForecasts(ctx context.Context, f ForecastFilter) ([]ForecastRecord, error)
+	// LastPollTimes returns, per provider instance name, the start time of its latest poll.
+	LastPollTimes(ctx context.Context) (map[string]time.Time, error)
+
+	// LoadSettings returns the persisted settings; found is false if none were saved yet.
+	LoadSettings(ctx context.Context) (s *config.Settings, found bool, err error)
+	// SaveSettings atomically replaces the persisted settings.
+	SaveSettings(ctx context.Context, s config.Settings) error
+
 	Close() error
 }
 
