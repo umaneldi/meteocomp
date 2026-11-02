@@ -32,5 +32,5 @@ ENV METEOCOMP_HTTP_ADDR=:8080 \
 
 VOLUME /data
 EXPOSE 8080
-USER 0:0
+USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/meteocomp"]
