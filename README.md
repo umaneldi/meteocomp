@@ -19,6 +19,14 @@ Open-Meteo needs no API key, so the example config works out of the box.
 | `openmeteo`      | no  | hourly + daily    | `forecast_days` (1-16, default 7) |
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
 | `weatherapi`     | yes | hourly + daily    | `days` (1-14, default 3)         |
+| `meteofrance`    | yes | 1h or 3h, ≤ 51h, France only | `horizon_hours` (1-51, default 48), `step_hours` (1 or 3, default 3), `requests_per_minute` (default 45), `grid` (`0025`/`001`) |
+
+`meteofrance` uses the AROME model through the official Météo-France API portal
+(WCS interface, key sent as `apikey` header; the key must be subscribed to the
+"AROME" API). The service returns one value per request and the quota is
+50 requests/minute, so polls take a few minutes per location. AROME has no weather
+code: the condition is derived from precipitation, snow fraction, visibility and
+cloud cover.
 
 Any number of instances can be configured, including several of the same type.
 

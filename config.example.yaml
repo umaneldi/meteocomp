@@ -16,6 +16,10 @@ locations:
 #   openmeteo       no key needed;   options: forecast_days (1-16, default 7)
 #   openweathermap  api_key needed;  5 day / 3 hour forecast
 #   weatherapi      api_key needed;  options: days (1-14, default 3)
+#   meteofrance     api_key needed (subscribed to the AROME API on portail-api.meteofrance.fr);
+#                   France/neighbouring area only; options: horizon_hours (1-51, default 48),
+#                   step_hours (1 or 3, default 3), requests_per_minute (1-50, default 45),
+#                   grid ("0025" or "001", default "0025")
 providers:
   - name: open-meteo
     type: openmeteo
@@ -30,4 +34,12 @@ providers:
   - name: weatherapi
     type: weatherapi
     api_key: "${WEATHERAPI_KEY}"
+    enabled: false
+
+  # Slow: ~11 requests per time step and location under a 50 requests/minute quota
+  # (about 4 minutes per location with the defaults).
+  - name: meteofrance
+    type: meteofrance
+    api_key: "${METEOFRANCE_API_KEY}"
+    interval: 3h
     enabled: false

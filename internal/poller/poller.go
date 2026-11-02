@@ -136,8 +136,18 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 	return failures
 }
 
+// fetchTimeouter is implemented by providers whose fetches take longer than
+// the default timeout (e.g. rate-limited APIs issuing many requests).
+type fetchTimeouter interface {
+	FetchTimeout() time.Duration
+}
+
 func (p *Poller) fetch(ctx context.Context, prov weather.Provider, loc weather.Location) store.PollResult {
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	timeout := p.timeout
+	if ft, ok := prov.(fetchTimeouter); ok {
+		timeout = max(timeout, ft.FetchTimeout())
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res := store.PollResult{
 		Provider:     prov.Name(),
