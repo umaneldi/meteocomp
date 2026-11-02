@@ -1,0 +1,33 @@
+# Optional seed configuration driven by environment variables, mainly for
+# automated tests (e.g. GitHub Actions). It is only used when METEOCOMP_CONFIG
+# points at this file AND the database holds no settings yet; afterwards the
+# settings stored in the database (edited from the web UI) win.
+#
+#   docker run -e METEOCOMP_CONFIG=/etc/meteocomp/config.yaml -e OWM_ENABLED=true -e OWM_API_KEY=... ...
+
+poll_interval: ${METEOCOMP_POLL_INTERVAL:-1h}
+
+# YAML flow sequence, e.g.
+# [{name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522}]
+locations: ${METEOCOMP_LOCATIONS:-[]}
+
+providers:
+  - name: open-meteo
+    type: openmeteo
+    enabled: ${OPENMETEO_ENABLED:-true}
+    options: { forecast_days: ${OPENMETEO_FORECAST_DAYS:-7} }
+
+  - name: meteofrance
+    type: openmeteo
+    enabled: ${METEOFRANCE_ENABLED:-false}
+    options: { endpoint: meteofrance, forecast_days: ${METEOFRANCE_FORECAST_DAYS:-4} }
+
+  # API keys come from OWM_API_KEY / WEATHER_API_KEY at runtime (or the web UI).
+  - name: owm
+    type: openweathermap
+    enabled: ${OWM_ENABLED:-false}
+
+  - name: weatherapi
+    type: weatherapi
+    enabled: ${WEATHERAPI_ENABLED:-false}
+    options: { days: ${WEATHERAPI_DAYS:-3} }

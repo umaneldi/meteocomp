@@ -1,6 +1,7 @@
 /meteocomp
 /bin/
 config.yaml
+!docker/config.yaml
 *.db
 *.db-shm
 *.db-wal
