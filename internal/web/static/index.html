@@ -26,6 +26,7 @@
         <a href="#locations">Locations</a>
         <a href="#providers">Providers</a>
         <a href="#activity">Activity</a>
+        <a href="#forecast">Forecast</a>
       </nav>
     </div>
   </header>
@@ -110,6 +111,34 @@
         </table>
       </div>
       <p class="empty" id="polls-empty" hidden>No polls recorded yet.</p>
+    </section>
+    <section id="forecast" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">05</span>
+        <div>
+          <h2>Forecast comparison</h2>
+          <p class="hint">Latest forecast from each provider for a location, side by side on the same timeline.</p>
+        </div>
+      </header>
+      <div class="fc-controls">
+        <label class="field fc-loc-field">
+          <span>Location</span>
+          <select id="fc-location"></select>
+        </label>
+        <div class="fc-gran" role="group" aria-label="Granularity">
+          <button type="button" id="fc-gran-hourly" aria-pressed="true">Hourly</button>
+          <button type="button" id="fc-gran-daily" aria-pressed="false">Daily</button>
+        </div>
+        <div class="fc-nav" role="group" aria-label="Time window">
+          <button type="button" class="btn ghost small" id="fc-prev">&#8592;</button>
+          <span class="fc-window-label" id="fc-window-label"></span>
+          <button type="button" class="btn ghost small" id="fc-next">&#8594;</button>
+          <button type="button" class="btn ghost small" id="fc-now">Now</button>
+        </div>
+      </div>
+      <div id="fc-wrap">
+        <p class="empty" id="fc-empty">Select a location above to view forecast data.</p>
+      </div>
     </section>
   </main>
 

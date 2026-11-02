@@ -525,6 +525,220 @@ function renderAll() {
   renderInterval();
   renderLocations();
   renderProviders();
+  populateFcLocation();
+}
+
+// ── Forecast comparison ───────────────────────────────────────────────────
+const fc = {
+  location: "",
+  granularity: "hourly",
+  windowStart: null, // Date; null means "now"
+};
+
+const CONDITION_LABEL = {
+  clear: "clear", partly_cloudy: "partly cloudy", cloudy: "cloudy", fog: "fog",
+  drizzle: "drizzle", rain: "rain", freezing_rain: "freezing rain", sleet: "sleet",
+  snow: "snow", thunderstorm: "storm", unknown: "",
+};
+
+function tempClass(c) {
+  if (c == null) return "";
+  if (c < 0) return "cold";
+  if (c < 10) return "cool";
+  if (c < 20) return "mild";
+  if (c < 28) return "warm";
+  return "hot";
+}
+
+function fcWindowStart() {
+  if (fc.windowStart) return fc.windowStart;
+  const now = new Date();
+  if (fc.granularity === "daily") {
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  }
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
+}
+
+function fcWindowEnd(start) {
+  const ms = fc.granularity === "daily" ? 7 * 86400e3 : 48 * 3600e3;
+  return new Date(start.getTime() + ms);
+}
+
+function shiftWindow(dir) {
+  const start = fcWindowStart();
+  const shift = fc.granularity === "daily" ? 7 * 86400e3 : 24 * 3600e3;
+  fc.windowStart = new Date(start.getTime() + dir * shift);
+  loadForecast();
+}
+
+function renderFcWindowLabel(start, end) {
+  const fmt = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  if (fc.granularity === "daily") {
+    $("fc-window-label").textContent = `${fmt(start)} – ${fmt(new Date(end.getTime() - 86400e3))}`;
+  } else {
+    const fmtH = (d) => d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+    $("fc-window-label").textContent = `${fmtH(start)} – ${fmtH(end)} UTC`;
+  }
+}
+
+function populateFcLocation() {
+  const sel = $("fc-location");
+  if (!sel) return;
+  const locs = state.locations;
+  if (!locs.length) {
+    sel.replaceChildren(h("option", { value: "" }, "No locations configured"));
+    return;
+  }
+  const prev = fc.location || sel.value;
+  sel.replaceChildren(
+    h("option", { value: "" }, "Select location…"),
+    ...locs.map((l) => h("option", { value: l.name, selected: l.name === prev }, l.name)),
+  );
+  if (!fc.location && locs.length === 1) {
+    fc.location = locs[0].name;
+    sel.value = fc.location;
+  }
+}
+
+async function loadForecast() {
+  if (!fc.location) {
+    const empty = $("fc-empty");
+    empty.textContent = "Select a location above to view forecast data.";
+    $("fc-wrap").replaceChildren(empty);
+    return;
+  }
+
+  const start = fcWindowStart();
+  const end = fcWindowEnd(start);
+  renderFcWindowLabel(start, end);
+
+  const wrap = $("fc-wrap");
+  wrap.replaceChildren(h("p", { class: "fc-loading" }, "Loading…"));
+
+  let records;
+  try {
+    const params = new URLSearchParams({
+      location: fc.location,
+      granularity: fc.granularity,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      limit: "2000",
+    });
+    records = await api("GET", `/api/v1/forecasts?${params}`);
+  } catch (e) {
+    wrap.replaceChildren(h("p", { class: "empty" }, `Could not load forecasts: ${e.message}`));
+    return;
+  }
+
+  renderForecastTable(records, wrap);
+}
+
+function renderForecastTable(records, wrap) {
+  const byTime = new Map();
+  const providerSet = new Set();
+
+  for (const r of records) {
+    const t = r.forecast_time;
+    providerSet.add(r.provider);
+    if (!byTime.has(t)) byTime.set(t, new Map());
+    const byProv = byTime.get(t);
+    const existing = byProv.get(r.provider);
+    if (!existing || r.polled_at > existing.polled_at) byProv.set(r.provider, r);
+  }
+
+  const times = [...byTime.keys()].sort();
+  const settingsOrder = state.providers.map((p) => p.name);
+  const provList = [
+    ...settingsOrder.filter((n) => providerSet.has(n)),
+    ...[...providerSet].filter((n) => !settingsOrder.includes(n)).sort(),
+  ];
+
+  if (!times.length || !provList.length) {
+    wrap.replaceChildren(h("p", { class: "empty" }, "No forecast data for this location and time window. Try polling first."));
+    return;
+  }
+
+  const thead = h("thead", {},
+    h("tr", {},
+      h("th", { class: "fc-time-col" }, "Time (UTC)"),
+      ...provList.map((p) => h("th", {}, p)),
+    ),
+  );
+
+  const rows = [];
+  let lastDay = null;
+
+  for (const t of times) {
+    const date = new Date(t);
+    const dayKey = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+    if (fc.granularity === "hourly" && dayKey !== lastDay) {
+      rows.push(h("tr", { class: "fc-day-head" },
+        h("td", { colspan: String(provList.length + 1) }, dayKey),
+      ));
+      lastDay = dayKey;
+    }
+
+    const timeLabel = fc.granularity === "daily"
+      ? date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+      : date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+
+    const byProv = byTime.get(t);
+    rows.push(h("tr", {},
+      h("td", { class: "fc-time" }, timeLabel),
+      ...provList.map((p) => {
+        const r = byProv.get(p);
+        if (!r) return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
+
+        const temp = r.temperature_c ?? r.temperature_max_c ?? null;
+        const tempEl = temp != null
+          ? h("span", { class: `fc-temp ${tempClass(temp)}` }, `${temp > 0 ? "+" : ""}${Math.round(temp)}°`)
+          : h("span", { class: "fc-temp mild" }, "—");
+
+        const condText = CONDITION_LABEL[r.condition] || r.condition || "";
+        const precipMm = r.precipitation_mm;
+        const metaChildren = [];
+        if (condText) metaChildren.push(h("span", { class: "fc-cond" }, condText));
+        if (precipMm != null && precipMm > 0) metaChildren.push(h("span", { class: "fc-precip" }, `${precipMm.toFixed(1)} mm`));
+
+        return h("td", { class: "fc-cell" },
+          tempEl,
+          metaChildren.length ? h("div", { class: "fc-meta" }, ...metaChildren) : null,
+        );
+      }),
+    ));
+  }
+
+  wrap.replaceChildren(h("table", { class: "fc-table" }, thead, h("tbody", {}, ...rows)));
+}
+
+function setupForecast() {
+  populateFcLocation();
+  if (state.locations.length && !fc.location) {
+    fc.location = state.locations[0].name;
+    $("fc-location").value = fc.location;
+  }
+  renderFcWindowLabel(fcWindowStart(), fcWindowEnd(fcWindowStart()));
+
+  $("fc-location").addEventListener("change", (e) => {
+    fc.location = e.target.value;
+    fc.windowStart = null;
+    loadForecast();
+  });
+
+  const setGran = (g) => {
+    fc.granularity = g;
+    fc.windowStart = null;
+    $("fc-gran-hourly").setAttribute("aria-pressed", String(g === "hourly"));
+    $("fc-gran-daily").setAttribute("aria-pressed", String(g === "daily"));
+    loadForecast();
+  };
+  $("fc-gran-hourly").addEventListener("click", () => setGran("hourly"));
+  $("fc-gran-daily").addEventListener("click", () => setGran("daily"));
+  $("fc-prev").addEventListener("click", () => shiftWindow(-1));
+  $("fc-next").addEventListener("click", () => shiftWindow(1));
+  $("fc-now").addEventListener("click", () => { fc.windowStart = null; loadForecast(); });
+
+  if (fc.location) loadForecast();
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
@@ -543,6 +757,7 @@ async function boot() {
 
   renderAll();
   updateDirty();
+  setupForecast();
   setupGeoSearch();
 
   $("interval").addEventListener("input", (e) => { state.interval = e.target.value; updateDirty(); });
