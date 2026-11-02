@@ -1,0 +1,64 @@
+-- All timestamps are stored as UTC text in the format 2006-01-02T15:04:05Z,
+-- which sorts lexicographically in chronological order.
+
+-- One row per (provider, location) fetch attempt, successful or not.
+CREATE TABLE IF NOT EXISTS polls (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider       TEXT    NOT NULL,           -- provider instance name from config
+    provider_type  TEXT    NOT NULL,           -- implementation, e.g. openmeteo
+    location_name  TEXT    NOT NULL,
+    started_at     TEXT    NOT NULL,
+    finished_at    TEXT    NOT NULL,
+    duration_ms    INTEGER NOT NULL,
+    status         TEXT    NOT NULL CHECK (status IN ('ok', 'error')),
+    error          TEXT,
+    forecast_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_polls_provider_started ON polls (provider, started_at);
+CREATE INDEX IF NOT EXISTS idx_polls_started ON polls (started_at);
+
+-- One row per forecast data point. Rows are append-only: every poll stores a new
+-- snapshot so the evolution of a forecast for a given target time can be compared.
+CREATE TABLE IF NOT EXISTS forecasts (
+    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_id                       INTEGER NOT NULL REFERENCES polls (id) ON DELETE CASCADE,
+    polled_at                     TEXT    NOT NULL,
+    provider                      TEXT    NOT NULL,
+    provider_type                 TEXT    NOT NULL,
+
+    location_name                 TEXT    NOT NULL,
+    city                          TEXT,
+    country                       TEXT,
+    latitude                      REAL    NOT NULL,
+    longitude                     REAL    NOT NULL,
+
+    forecast_time                 TEXT    NOT NULL,  -- UTC start of the covered period
+    granularity                   TEXT    NOT NULL,  -- hourly | 3h | daily
+    lead_time_hours               REAL    NOT NULL,  -- forecast_time - polled_at
+
+    temperature_c                 REAL,
+    temperature_min_c             REAL,
+    temperature_max_c             REAL,
+    feels_like_c                  REAL,
+    humidity_pct                  REAL,
+    dew_point_c                   REAL,
+    pressure_hpa                  REAL,
+    wind_speed_kmh                REAL,
+    wind_gust_kmh                 REAL,
+    wind_direction_deg            REAL,
+    cloud_cover_pct               REAL,
+    precipitation_mm              REAL,
+    precipitation_probability_pct REAL,
+    snowfall_cm                   REAL,
+    uv_index                      REAL,
+    visibility_km                 REAL,
+
+    condition                     TEXT    NOT NULL,  -- normalized, see weather.Condition
+    condition_code                TEXT,              -- raw provider code
+    condition_text                TEXT,              -- raw provider description
+
+    created_at                    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_forecasts_provider_loc_time ON forecasts (provider, location_name, forecast_time);
+CREATE INDEX IF NOT EXISTS idx_forecasts_time ON forecasts (forecast_time);
+CREATE INDEX IF NOT EXISTS idx_forecasts_poll ON forecasts (poll_id);

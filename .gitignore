@@ -1,0 +1,7 @@
+/meteocomp
+/bin/
+config.yaml
+*.db
+*.db-shm
+*.db-wal
+.env

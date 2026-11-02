@@ -1,0 +1,33 @@
+# Copy to config.yaml and adjust. ${ENV_VARS} are expanded at load time.
+http:
+  addr: ":8080"
+database:
+  path: "meteocomp.db"
+
+# Used by providers that do not set their own interval. Minimum 1m.
+default_interval: 1h
+
+locations:
+  - { name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522 }
+  - { name: london, city: London, country: GB, latitude: 51.5074, longitude: -0.1278 }
+
+# Any number of provider instances. The same type may appear several times
+# with different names, keys or intervals. Available types:
+#   openmeteo       no key needed;   options: forecast_days (1-16, default 7)
+#   openweathermap  api_key needed;  5 day / 3 hour forecast
+#   weatherapi      api_key needed;  options: days (1-14, default 3)
+providers:
+  - name: open-meteo
+    type: openmeteo
+    options: { forecast_days: 7 }
+
+  - name: owm
+    type: openweathermap
+    api_key: "${OWM_API_KEY}"
+    interval: 3h
+    enabled: false
+
+  - name: weatherapi
+    type: weatherapi
+    api_key: "${WEATHERAPI_KEY}"
+    enabled: false
