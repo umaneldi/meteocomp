@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -21,11 +22,16 @@ type Factory func(cfg config.ProviderConfig, client *http.Client) (weather.Provi
 
 // Info describes a provider type for the web UI.
 type Info struct {
-	Type           string   `json:"type"`
-	Description    string   `json:"description"`
-	RequiresAPIKey bool     `json:"requires_api_key"`
-	SignupURL      string   `json:"signup_url,omitempty"` // where to obtain an API key
-	Options        []Option `json:"options"`
+	Type           string `json:"type"`
+	Description    string `json:"description"`
+	RequiresAPIKey bool   `json:"requires_api_key"`
+	SignupURL      string `json:"signup_url,omitempty"` // where to obtain an API key
+	// APIKeyEnv names an environment variable that, when set, provides the API key
+	// for every instance of this type, overriding the key stored in the settings.
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	// APIKeyEnvSet is computed by Infos: whether APIKeyEnv is currently set.
+	APIKeyEnvSet bool     `json:"api_key_env_set"`
+	Options      []Option `json:"options"`
 }
 
 // Option documents one provider-specific option.
@@ -62,8 +68,10 @@ func Infos() []Info {
 	out := []Info{}
 	for _, t := range Types() {
 		mu.RLock()
-		out = append(out, infos[t])
+		info := infos[t]
 		mu.RUnlock()
+		_, _, info.APIKeyEnvSet = EnvAPIKey(t)
+		out = append(out, info)
 	}
 	return out
 }
@@ -80,11 +88,30 @@ func Types() []string {
 	return out
 }
 
-// New builds a provider instance from cfg.
+// EnvAPIKey returns the name of the environment variable providing the API key
+// for provider type typ, if that variable is set and non-empty.
+func EnvAPIKey(typ string) (name, value string, ok bool) {
+	mu.RLock()
+	info := infos[typ]
+	mu.RUnlock()
+	if info.APIKeyEnv == "" {
+		return "", "", false
+	}
+	if v := os.Getenv(info.APIKeyEnv); v != "" {
+		return info.APIKeyEnv, v, true
+	}
+	return info.APIKeyEnv, "", false
+}
+
+// New builds a provider instance from cfg. An API key set in the type's
+// environment variable (see Info.APIKeyEnv) overrides cfg.APIKey.
 func New(cfg config.ProviderConfig) (weather.Provider, error) {
 	mu.RLock()
 	f, ok := factories[cfg.Type]
 	mu.RUnlock()
+	if _, key, ok := EnvAPIKey(cfg.Type); ok {
+		cfg.APIKey = key
+	}
 	if !ok {
 		return nil, fmt.Errorf("provider %q: unknown type %q (available: %v)", cfg.Name, cfg.Type, Types())
 	}

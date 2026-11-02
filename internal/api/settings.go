@@ -80,8 +80,9 @@ type providerDoc struct {
 	Options map[string]any `json:"options"`
 
 	// Response only.
-	HasAPIKey  bool   `json:"has_api_key"`
-	APIKeyHint string `json:"api_key_hint,omitempty"` // last characters of the key
+	HasAPIKey  bool   `json:"has_api_key"`            // a key is stored in the settings
+	APIKeyHint string `json:"api_key_hint,omitempty"` // last characters of the stored key
+	APIKeyEnv  string `json:"api_key_env,omitempty"`  // set when an environment variable provides the key (it wins)
 
 	// Request only. APIKey nil keeps the stored key, "" removes it.
 	// PreviousName identifies the stored provider when it is renamed.
@@ -104,10 +105,14 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 		if opts == nil {
 			opts = map[string]any{}
 		}
-		doc.Providers = append(doc.Providers, providerDoc{
+		d := providerDoc{
 			Name: p.Name, Type: p.Type, Enabled: p.IsEnabled(), Options: opts,
 			HasAPIKey: p.APIKey != "", APIKeyHint: keyHint(p.APIKey),
-		})
+		}
+		if name, _, ok := providers.EnvAPIKey(p.Type); ok {
+			d.APIKeyEnv = name
+		}
+		doc.Providers = append(doc.Providers, d)
 	}
 	writeJSON(w, http.StatusOK, doc)
 }

@@ -138,7 +138,13 @@ function cleanOptions(p) {
 }
 
 // Whether the provider will have an API key after saving.
+function keyFromEnv(p) {
+  const info = typeInfo(p.type);
+  return info?.api_key_env_set ? info.api_key_env : "";
+}
+
 function keyAfterSave(p) {
+  if (keyFromEnv(p)) return true;
   if (p.newKey.trim()) return true;
   if (p.clearKey) return false;
   return p.has_api_key && p.type === p.origType;
@@ -395,6 +401,15 @@ function providerCard(p) {
 }
 
 function keyBlock(p, info, rerender, id) {
+  const env = keyFromEnv(p);
+  if (env) {
+    return h("div", { class: "field key" },
+      h("span", {}, "API key"),
+      h("div", { class: "key-row" },
+        h("span", { class: "key-state set" }, "key from environment"),
+        h("span", { class: "hint small key-env" }, "Provided by the ", h("code", {}, env),
+          " environment variable, which overrides any key entered here. Unset it to manage the key from this page.")));
+  }
   let pill;
   if (p.newKey.trim()) pill = h("span", { class: "key-state pending" }, "new key — unsaved");
   else if (p.clearKey) pill = h("span", { class: "key-state pending" }, "will be removed");

@@ -155,3 +155,40 @@ func TestUIAndProviderTypes(t *testing.T) {
 		}
 	}
 }
+
+// An API key from the environment overrides the stored key: a keyed provider can
+// be enabled without a stored key, and the env source is reported.
+func TestSettingsAPIEnvKey(t *testing.T) {
+	t.Setenv("OWM_API_KEY", "env-key-0000")
+	ts, st := newTestServer(t)
+
+	code, body := put(t, ts, `{"poll_interval":"1h","locations":[],"providers":[{"name":"owm","type":"openweathermap","enabled":true}]}`)
+	if code != http.StatusOK {
+		t.Fatalf("enable with env key: %d %s", code, body)
+	}
+	if strings.Contains(body, "env-key-0000") {
+		t.Errorf("env key leaked: %s", body)
+	}
+	var doc settingsDoc
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if p := doc.Providers[0]; p.APIKeyEnv != "OWM_API_KEY" || p.HasAPIKey {
+		t.Errorf("provider doc: %+v", p)
+	}
+	// The env key is not persisted.
+	if saved, _, _ := st.LoadSettings(context.Background()); saved.Providers[0].APIKey != "" {
+		t.Errorf("env key persisted")
+	}
+
+	res, err := http.Get(ts.URL + "/api/v1/provider-types")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if !strings.Contains(string(b), `"api_key_env":"OWM_API_KEY","api_key_env_set":true`) ||
+		!strings.Contains(string(b), `"api_key_env":"WEATHER_API_KEY","api_key_env_set":false`) {
+		t.Errorf("provider types: %s", b)
+	}
+}

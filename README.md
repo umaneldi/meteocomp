@@ -21,6 +21,17 @@ Settings are persisted in the database. On first start the database is seeded wi
 provider resumes from its last recorded poll, so saving or restarting does not trigger extra API calls.
 Use *Poll now* to fetch immediately.
 
+### API keys from environment variables
+
+Keys can also be supplied through environment variables. When set (non-empty), they are used
+for every instance of the provider type and override the key typed in the web UI, which then
+shows the key as coming from the environment. When unset, enter the key in the web UI.
+
+| Provider type | Variable |
+| --- | --- |
+| `openweathermap` | `OWM_API_KEY` |
+| `weatherapi` | `WEATHER_API_KEY` |
+
 > The UI and settings API have no authentication. Do not expose port 8080 publicly; put it
 > behind a reverse proxy with authentication or keep it on a private network.
 
@@ -45,6 +56,8 @@ by `.github/workflows/docker.yml`: `latest` from the default branch and semver t
 
 ```sh
 docker run -d -p 8080:8080 -v meteocomp-data:/data ghcr.io/yanndethe/meteocomp
+# optionally provide API keys instead of typing them in the UI:
+#   -e OWM_API_KEY=... -e WEATHER_API_KEY=...
 ```
 
 then configure it at http://localhost:8080/. Settings and data live in `/data/meteocomp.db`.
@@ -66,8 +79,8 @@ docker run --rm -p 8080:8080 \
 | `METEOCOMP_LOCATIONS` | `[]` (YAML flow sequence of locations) |
 | `OPENMETEO_ENABLED` / `OPENMETEO_FORECAST_DAYS` | `true` / `7` |
 | `METEOFRANCE_ENABLED` / `METEOFRANCE_FORECAST_DAYS` | `false` / `4` |
-| `OWM_ENABLED` / `OWM_API_KEY` | `false` / – |
-| `WEATHERAPI_ENABLED` / `WEATHERAPI_KEY` / `WEATHERAPI_DAYS` | `false` / – / `3` |
+| `OWM_ENABLED` | `false` (key: `OWM_API_KEY`, see above) |
+| `WEATHERAPI_ENABLED` / `WEATHERAPI_DAYS` | `false` / `3` (key: `WEATHER_API_KEY`, see above) |
 
 ## Providers
 

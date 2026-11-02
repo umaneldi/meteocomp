@@ -21,8 +21,14 @@ COPY --from=build --chown=nonroot:nonroot /out/data /data
 # Settings (locations, API keys, poll interval) are edited in the web UI and stored
 # in the database. docker/config.yaml is an optional env-driven seed used for
 # automated tests: enable it with -e METEOCOMP_CONFIG=/etc/meteocomp/config.yaml.
+#
+# OWM_API_KEY / WEATHER_API_KEY: when set (non-empty), they provide the API key
+# of the OpenWeatherMap / WeatherAPI.com providers and override any key typed in
+# the web UI. When empty, keys are entered in the web UI.
 ENV METEOCOMP_HTTP_ADDR=:8080 \
-    METEOCOMP_DB_PATH=/data/meteocomp.db
+    METEOCOMP_DB_PATH=/data/meteocomp.db \
+    OWM_API_KEY="" \
+    WEATHER_API_KEY=""
 
 VOLUME /data
 EXPOSE 8080

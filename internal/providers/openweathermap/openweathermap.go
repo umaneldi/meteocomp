@@ -24,6 +24,7 @@ func init() {
 	providers.Register(Type, New, providers.Info{
 		Description:    "OpenWeatherMap 5 day / 3 hour forecast (free plan).",
 		RequiresAPIKey: true,
+		APIKeyEnv:      "OWM_API_KEY",
 		SignupURL:      "https://home.openweathermap.org/api_keys",
 	})
 }

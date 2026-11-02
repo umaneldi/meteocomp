@@ -28,12 +28,12 @@ providers:
 
   - name: owm
     type: openweathermap
-    api_key: "${OWM_API_KEY}"
+    # api_key: "..."   # or set OWM_API_KEY, which overrides it, or use the web UI
     enabled: false
 
   - name: weatherapi
     type: weatherapi
-    api_key: "${WEATHERAPI_KEY}"
+    # api_key: "..."   # or set WEATHER_API_KEY, which overrides it, or use the web UI
     enabled: false
 
   # Météo-France AROME (France) + ARPEGE through Open-Meteo, about 4 days, no key needed.

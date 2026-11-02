@@ -205,6 +205,7 @@ input::placeholder { color: var(--ink-3); }
 .key-state.set { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .key-state.unset { background: var(--err-soft); color: var(--err); }
 .key-state.pending { background: var(--signal-soft); color: var(--signal); }
+.key-env { margin: 0; }
 .key-link { font-size: .82rem; color: var(--ink-2); }
 
 .switch { display: inline-flex; align-items: center; gap: .5rem; cursor: pointer; user-select: none; font-size: .88rem; padding-bottom: .45rem; }
