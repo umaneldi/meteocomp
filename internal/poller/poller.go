@@ -130,6 +130,44 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 			"locations_skipped", len(p.locations)-attempted, "forecasts", forecasts, "duration", time.Since(start))
 	}()
 
+	if bp, ok := prov.(weather.BatchProvider); ok {
+		batchCtx, cancel := context.WithTimeout(ctx, p.timeout)
+		batchStart := time.Now()
+		batchResults, batchErr := bp.FetchAll(batchCtx, p.locations)
+		batchEnd := time.Now()
+		cancel()
+		for _, loc := range p.locations {
+			if ctx.Err() != nil {
+				return failures
+			}
+			attempted++
+			res := store.PollResult{
+				Provider:     prov.Name(),
+				ProviderType: prov.Type(),
+				Location:     loc,
+				StartedAt:    batchStart,
+				FinishedAt:   batchEnd,
+			}
+			if batchErr != nil {
+				res.Err = batchErr
+			} else if lr, ok := batchResults[loc.Name]; ok {
+				res.Forecasts, res.Err = lr.Forecasts, lr.Err
+			}
+			log := plog.With("location", loc.Name)
+			if res.Err != nil {
+				failures++
+				log.Warn("location poll failed", "error", res.Err, "duration", batchEnd.Sub(batchStart))
+			} else {
+				forecasts += len(res.Forecasts)
+				log.Info("location poll ok", "forecasts", len(res.Forecasts), "duration", batchEnd.Sub(batchStart))
+			}
+			if _, err := p.store.RecordPoll(context.WithoutCancel(ctx), res); err != nil {
+				log.Error("record poll", "error", err)
+			}
+		}
+		return failures
+	}
+
 	for _, loc := range p.locations {
 		if ctx.Err() != nil {
 			return failures

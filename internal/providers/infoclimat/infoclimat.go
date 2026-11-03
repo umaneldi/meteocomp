@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yanndethe/meteocomp/internal/config"
@@ -99,42 +100,78 @@ type rawReading struct {
 	UVIndex        *float64 `json:"uv_index"`
 }
 
+// Fetch satisfies weather.Provider by delegating to FetchAll.
 func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.Forecast, error) {
-	if loc.StationID == "" {
-		return nil, fmt.Errorf("provider %q: location %q has no station_id configured", p.name, loc.Name)
+	results, err := p.FetchAll(ctx, []weather.Location{loc})
+	if err != nil {
+		return nil, err
+	}
+	lr := results[loc.Name]
+	return lr.Forecasts, lr.Err
+}
+
+// FetchAll satisfies weather.BatchProvider, batching all locations into one API call.
+func (p *Provider) FetchAll(ctx context.Context, locs []weather.Location) (map[string]weather.LocationResult, error) {
+	results := make(map[string]weather.LocationResult, len(locs))
+
+	var validLocs []weather.Location
+	for _, loc := range locs {
+		if loc.StationID == "" {
+			results[loc.Name] = weather.LocationResult{
+				Err: fmt.Errorf("provider %q: location %q has no station_id configured", p.name, loc.Name),
+			}
+		} else {
+			validLocs = append(validLocs, loc)
+		}
+	}
+	if len(validLocs) == 0 {
+		return results, nil
 	}
 
 	now := time.Now().UTC()
-	start := now.AddDate(0, 0, -p.pastDays).Format("2006-01-02")
-	end := now.Format("2006-01-02")
-
 	q := url.Values{}
 	q.Set("version", "2")
 	q.Set("method", "get")
 	q.Set("format", "json")
-	q.Set("start", start)
-	q.Set("end", end)
+	q.Set("start", now.AddDate(0, 0, -p.pastDays).Format("2006-01-02"))
+	q.Set("end", now.Format("2006-01-02"))
 	q.Set("token", p.token)
 
-	// Build the URL with raw (un-encoded) brackets for the stations[] parameter,
-	// which is what the Infoclimat API expects.
-	rawURL := p.baseURL + "?" + q.Encode() + "&stations[]=" + url.QueryEscape(loc.StationID)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s?%s", p.baseURL, q.Encode())
+	for _, loc := range validLocs {
+		fmt.Fprintf(&sb, "&stations[]=%s", url.QueryEscape(loc.StationID))
+	}
 
 	var r apiResponse
-	if err := providers.GetJSON(ctx, p.client, rawURL, &r); err != nil {
+	if err := providers.GetJSON(ctx, p.client, sb.String(), &r); err != nil {
 		return nil, err
 	}
 
-	stationReadings, ok := r.Hourly[loc.StationID]
-	if !ok {
-		return nil, fmt.Errorf("provider %q: station %q not found in response", p.name, loc.StationID)
+	for _, loc := range validLocs {
+		stationReadings, ok := r.Hourly[loc.StationID]
+		if !ok {
+			results[loc.Name] = weather.LocationResult{}
+			continue
+		}
+		forecasts, err := p.parseReadings(now, stationReadings)
+		if err != nil {
+			results[loc.Name] = weather.LocationResult{
+				Err: fmt.Errorf("provider %q: station %q: %w", p.name, loc.StationID, err),
+			}
+		} else {
+			results[loc.Name] = weather.LocationResult{Forecasts: forecasts}
+		}
 	}
+	return results, nil
+}
 
+func (p *Provider) parseReadings(now time.Time, stationReadings []rawReading) ([]weather.Forecast, error) {
 	out := make([]weather.Forecast, 0, len(stationReadings))
 	for _, rd := range stationReadings {
 		t, err := time.ParseInLocation("2006-01-02 15:04:05", rd.DhUTC, time.UTC)
 		if err != nil {
-			return nil, fmt.Errorf("provider %q: parse timestamp %q: %w", p.name, rd.DhUTC, err)
+			return nil, fmt.Errorf("parse timestamp %q: %w", rd.DhUTC, err)
 		}
 		if !t.Before(now) {
 			continue

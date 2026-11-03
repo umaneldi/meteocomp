@@ -92,3 +92,21 @@ type Provider interface {
 	// Fetch returns all forecast data points available for loc.
 	Fetch(ctx context.Context, loc Location) ([]Forecast, error)
 }
+
+// LocationResult holds the outcome of fetching one location in a batch.
+type LocationResult struct {
+	Forecasts []Forecast
+	Err       error
+}
+
+// BatchProvider is an optional Provider extension. When implemented, the poller
+// calls FetchAll once for all locations instead of Fetch per-location, allowing
+// a single API request to serve many stations.
+type BatchProvider interface {
+	Provider
+	// FetchAll fetches data for all locs in a single API call.
+	// The map is keyed by location Name. A location absent from the map is
+	// treated as a successful poll with zero readings. A non-nil error means
+	// the entire batch request failed; per-location errors are in LocationResult.Err.
+	FetchAll(ctx context.Context, locs []Location) (map[string]LocationResult, error)
+}

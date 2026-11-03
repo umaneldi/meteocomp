@@ -2,6 +2,7 @@ package infoclimat
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -111,6 +112,57 @@ func TestFetch(t *testing.T) {
 	}
 	if obs.ConditionCode != "61" {
 		t.Errorf("condition_code: %q", obs.ConditionCode)
+	}
+}
+
+func TestFetchAll(t *testing.T) {
+	const stationA = "07156"
+	const stationB = "000PU"
+	ts := pastHourTimestamp()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := r.URL.Query()["stations[]"]
+		if len(got) != 2 {
+			t.Errorf("expected 2 stations[], got %v", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Return data for both stations in a single response.
+		fmt.Fprintf(w, `{"status":"OK","errors":[],"data":[],"hourly":{%q:%s,%q:%s}}`,
+			stationA, `[{"dh_utc":"`+ts+`","temperature":12.3,"humidite":85.0,"pression":null,"vent_moyen":null,"vent_rafales":null,"vent_direction":null,"pluie_1h":null,"visibilite":null,"temps_omm":0,"uv_index":null}]`,
+			stationB, `[{"dh_utc":"`+ts+`","temperature":22.1,"humidite":60.0,"pression":null,"vent_moyen":null,"vent_rafales":null,"vent_direction":null,"pluie_1h":null,"visibilite":null,"temps_omm":0,"uv_index":null}]`,
+		)
+	}))
+	defer srv.Close()
+
+	p, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok", BaseURL: srv.URL + "/"}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	locs := []weather.Location{
+		{Name: "paris", StationID: stationA},
+		{Name: "castanet", StationID: stationB},
+		{Name: "nostation"},
+	}
+	results, err := p.(interface {
+		FetchAll(context.Context, []weather.Location) (map[string]weather.LocationResult, error)
+	}).FetchAll(context.Background(), locs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if lr := results["paris"]; lr.Err != nil || len(lr.Forecasts) != 1 {
+		t.Errorf("paris: err=%v forecasts=%d", lr.Err, len(lr.Forecasts))
+	} else if *lr.Forecasts[0].TemperatureC != 12.3 {
+		t.Errorf("paris temp: %v", *lr.Forecasts[0].TemperatureC)
+	}
+	if lr := results["castanet"]; lr.Err != nil || len(lr.Forecasts) != 1 {
+		t.Errorf("castanet: err=%v forecasts=%d", lr.Err, len(lr.Forecasts))
+	} else if *lr.Forecasts[0].TemperatureC != 22.1 {
+		t.Errorf("castanet temp: %v", *lr.Forecasts[0].TemperatureC)
+	}
+	if lr := results["nostation"]; lr.Err == nil {
+		t.Error("nostation: expected error for missing station_id")
 	}
 }
 
