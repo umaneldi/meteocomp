@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open database %q (check that its directory exists and is writable by uid %d): %w",
+			path, os.Getuid(), err)
 	}
 	if err := migrate(ctx, db); err != nil {
 		db.Close()

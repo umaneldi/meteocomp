@@ -253,36 +253,36 @@ function addLocation(loc) {
 const sta = { results: [], active: -1, timer: 0, seq: 0 };
 
 function setupStationSearch() {
-  const q = $(“geo-q”);
-  const list = $(“geo-results”);
-  q.addEventListener(“input”, () => {
+  const q = $("geo-q");
+  const list = $("geo-results");
+  q.addEventListener("input", () => {
     clearTimeout(sta.timer);
     const term = q.value.trim();
     if (term.length < 2) return closeStation();
     sta.timer = setTimeout(() => searchStations(term), 250);
   });
-  q.addEventListener(“keydown”, (e) => {
+  q.addEventListener("keydown", (e) => {
     if (list.hidden) return;
-    if (e.key === “ArrowDown” || e.key === “ArrowUp”) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const n = sta.results.length;
       if (!n) return;
-      sta.active = (sta.active + (e.key === “ArrowDown” ? 1 : -1) + n) % n;
+      sta.active = (sta.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
       renderStations();
-    } else if (e.key === “Enter” && sta.active >= 0) {
+    } else if (e.key === "Enter" && sta.active >= 0) {
       e.preventDefault();
       pickStation(sta.results[sta.active]);
-    } else if (e.key === “Escape”) {
+    } else if (e.key === "Escape") {
       closeStation();
     }
   });
-  q.addEventListener(“blur”, () => setTimeout(closeStation, 150));
+  q.addEventListener("blur", () => setTimeout(closeStation, 150));
 }
 
 async function searchStations(term) {
   const seq = ++sta.seq;
   try {
-    const data = await api(“GET”, `/api/v1/stations?q=${encodeURIComponent(term)}`);
+    const data = await api("GET", `/api/v1/stations?q=${encodeURIComponent(term)}`);
     if (seq !== sta.seq) return;
     sta.results = Array.isArray(data) ? data : [];
     sta.active = sta.results.length ? 0 : -1;
@@ -290,29 +290,29 @@ async function searchStations(term) {
   } catch {
     if (seq !== sta.seq) return;
     sta.results = [];
-    renderStations(true, “Station search unavailable — use “Add manually”.”);
+    renderStations(true, "Station search unavailable — use “Add manually”.");
   }
 }
 
 function renderStations(open = false, note) {
-  const list = $(“geo-results”);
-  const items = sta.results.map((s, i) => h(“li”, {
-    role: “option”, id: `geo-${i}`, “aria-selected”: String(i === sta.active),
+  const list = $("geo-results");
+  const items = sta.results.map((s, i) => h("li", {
+    role: "option", id: `geo-${i}`, "aria-selected": String(i === sta.active),
     onmousedown: (e) => { e.preventDefault(); pickStation(s); },
   },
-  h(“span”, {}, `${s.id} — ${s.name}${s.country ? ` (${s.country})` : “”}`),
-  h(“span”, { class: “geo-meta” }, `${s.latitude.toFixed(2)}, ${s.longitude.toFixed(2)}${s.elevation != null ? ` · ${s.elevation} m` : “”}`)));
-  if (!items.length) items.push(h(“li”, { class: “geo-none”, role: “option”, “aria-disabled”: “true” }, note || “No matching station.”));
+  h("span", {}, `${s.id} — ${s.name}${s.country ? ` (${s.country})` : ""}`),
+  h("span", { class: "geo-meta" }, `${s.latitude.toFixed(2)}, ${s.longitude.toFixed(2)}${s.elevation != null ? ` · ${s.elevation} m` : ""}`)));
+  if (!items.length) items.push(h("li", { class: "geo-none", role: "option", "aria-disabled": "true" }, note || "No matching station."));
   list.replaceChildren(...items);
   if (open) list.hidden = false;
-  $(“geo-q”).setAttribute(“aria-expanded”, String(!list.hidden));
-  if (sta.active >= 0) $(“geo-q”).setAttribute(“aria-activedescendant”, `geo-${sta.active}`);
-  else $(“geo-q”).removeAttribute(“aria-activedescendant”);
+  $("geo-q").setAttribute("aria-expanded", String(!list.hidden));
+  if (sta.active >= 0) $("geo-q").setAttribute("aria-activedescendant", `geo-${sta.active}`);
+  else $("geo-q").removeAttribute("aria-activedescendant");
 }
 
 function closeStation() {
-  $(“geo-results”).hidden = true;
-  $(“geo-q”).setAttribute(“aria-expanded”, “false”);
+  $("geo-results").hidden = true;
+  $("geo-q").setAttribute("aria-expanded", "false");
   sta.active = -1;
 }
 
@@ -321,12 +321,12 @@ function pickStation(s) {
   addLocation({
     name: slug(s.name),
     city: s.name,
-    country: (s.country || “”).toUpperCase(),
+    country: (s.country || "").toUpperCase(),
     latitude: Math.round(s.latitude * 1e4) / 1e4,
     longitude: Math.round(s.longitude * 1e4) / 1e4,
     station_id: s.id,
   });
-  $(“geo-q”).value = “”;
+  $("geo-q").value = "";
   closeStation();
   toast(`Added ${s.name}. Save to start polling it.`);
 }
@@ -364,7 +364,7 @@ function providerCard(p) {
       h("button", {
         type: "button", class: "icon-btn", title: "Remove provider", "aria-label": `Remove provider ${p.name}`,
         onclick: () => {
-          if (p.orig && !confirm(`Remove provider “${p.orig}”? Its stored API key is deleted; recorded forecasts are kept.`)) return;
+          if (p.orig && !confirm(`Remove provider "${p.orig}"? Its stored API key is deleted; recorded forecasts are kept.`)) return;
           state.providers = state.providers.filter((x) => x !== p);
           rerender();
         },
