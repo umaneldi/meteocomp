@@ -40,6 +40,7 @@ shows the key as coming from the environment. When unset, enter the key in the w
 | Flag | Env | Default |
 | --- | --- | --- |
 | `-addr` | `METEOCOMP_HTTP_ADDR` | `:8080` |
+| `-database-uri` | `DATABASE_URI` | none (SQLite at `-db`) |
 | `-db` | `METEOCOMP_DB_PATH` | `meteocomp.db` |
 | `-config` | `METEOCOMP_CONFIG` | none |
 
@@ -58,6 +59,8 @@ by `.github/workflows/docker.yml`: `latest` from the default branch and semver t
 docker run -d -p 8080:8080 -v meteocomp-data:/data ghcr.io/yanndethe/meteocomp
 # optionally provide API keys instead of typing them in the UI:
 #   -e OWM_API_KEY=... -e WEATHER_API_KEY=...
+#   or store data in PostgreSQL instead of the /data volume:
+#   -e DATABASE_URI=postgres://meteocomp:secret@db:5432/meteocomp?sslmode=disable
 ```
 
 then configure it at http://localhost:8080/. Settings and data live in `/data/meteocomp.db`.
@@ -107,7 +110,18 @@ Any number of instances can be configured, including several of the same type.
 
 ## Database
 
-SQLite (`-db`). Settings tables (`settings`, `locations`, `providers`) hold the current
+SQLite or PostgreSQL, selected by `DATABASE_URI` (or `-database-uri`):
+
+| URI | Backend |
+| --- | --- |
+| `postgres://user:pass@host:5432/dbname?sslmode=disable` (or `postgresql://`) | PostgreSQL |
+| `sqlite:///absolute/path.db`, `sqlite://relative/path.db`, `sqlite:path.db`, or a bare path | SQLite |
+
+When `DATABASE_URI` is unset, the SQLite file at `-db` / `METEOCOMP_DB_PATH` is used. Tables are
+created on startup; the PostgreSQL database itself must already exist. Data is not migrated
+between backends.
+
+Settings tables (`settings`, `locations`, `providers`) hold the current
 configuration; they are replaced as a whole on each save. Data tables:
 
 - `polls` — one row per provider/location fetch: timestamps, duration, status (`ok`/`error`), error, forecast count.
@@ -117,7 +131,10 @@ configuration; they are replaced as a whole on each save. Data tables:
   visibility, normalized condition (`clear`, `partly_cloudy`, `cloudy`, `fog`, `drizzle`, `rain`,
   `freezing_rain`, `sleet`, `snow`, `thunderstorm`, `unknown`) plus the raw provider code and text.
 
-See `internal/store/schema.sql` for the exact schema.
+See `internal/store/schema_sqlite.sql` and `internal/store/schema_postgres.sql` for the exact schema.
+
+Store tests also run against PostgreSQL when `METEOCOMP_TEST_POSTGRES_URI` is set; each test uses
+a throwaway schema in that database.
 
 ## HTTP API
 

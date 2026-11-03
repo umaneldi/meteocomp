@@ -3,20 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
-	_ "embed"
 	"fmt"
-	"net/url"
-	"os"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
-
-//go:embed schema.sql
-var schema string
 
 const timeLayout = "2006-01-02T15:04:05Z"
 
@@ -24,82 +16,15 @@ func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
 
 func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
-// SQLite is a Store backed by a SQLite database file.
-type SQLite struct {
+// SQLDB is a Store backed by a SQL database (SQLite or PostgreSQL).
+type SQLDB struct {
 	db *sql.DB
+	d  dialect
 }
 
-var _ Store = (*SQLite)(nil)
+var _ Store = (*SQLDB)(nil)
 
-// OpenSQLite opens (creating if needed) the database at path and applies the schema.
-func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
-	dsn := "file:" + path + "?" + url.Values{"_pragma": {
-		"foreign_keys(1)", "journal_mode(WAL)", "busy_timeout(5000)",
-	}}.Encode()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("open database %q (check that its directory exists and is writable by uid %d): %w",
-			path, os.Getuid(), err)
-	}
-	if err := migrate(ctx, db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
-	return &SQLite{db: db}, nil
-}
-
-// migrate handles one-time schema evolution from older database layouts.
-func migrate(ctx context.Context, db *sql.DB) error {
-	// Migration 1: rename forecasts table and add kind column.
-	var n int
-	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='forecasts'`).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		if _, err := db.ExecContext(ctx, `ALTER TABLE forecasts RENAME TO readings`); err != nil {
-			return fmt.Errorf("rename forecasts: %w", err)
-		}
-		if _, err := db.ExecContext(ctx,
-			`ALTER TABLE readings ADD COLUMN kind TEXT NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast', 'observation'))`); err != nil {
-			return fmt.Errorf("add kind column: %w", err)
-		}
-		if _, err := db.ExecContext(ctx, `ALTER TABLE polls RENAME COLUMN forecast_count TO reading_count`); err != nil {
-			return fmt.Errorf("rename forecast_count: %w", err)
-		}
-	}
-
-	// Migration 2: add station_id to existing locations tables.
-	// Skip if the locations table doesn't exist yet (fresh DB gets the column from schema.sql).
-	var tableExists int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='locations'`).Scan(&tableExists); err != nil {
-		return err
-	}
-	if tableExists > 0 {
-		if err := db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM pragma_table_info('locations') WHERE name='station_id'`).Scan(&n); err != nil {
-			return err
-		}
-		if n == 0 {
-			if _, err := db.ExecContext(ctx,
-				`ALTER TABLE locations ADD COLUMN station_id TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("add station_id column: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLite) Close() error { return s.db.Close() }
+func (s *SQLDB) Close() error { return s.db.Close() }
 
 // readingColumns lists the non-id columns of the readings table, in insertion order.
 const readingColumns = `poll_id, polled_at, provider, provider_type,
@@ -110,7 +35,7 @@ const readingColumns = `poll_id, polled_at, provider, provider_type,
 	precipitation_mm, precipitation_probability_pct, snowfall_cm, uv_index, visibility_km,
 	condition, condition_code, condition_text`
 
-func (s *SQLite) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
+func (s *SQLDB) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -121,22 +46,18 @@ func (s *SQLite) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
 	if r.Err != nil {
 		status, errText = StatusError, sql.NullString{String: r.Err.Error(), Valid: true}
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO polls
+	var pollID int64
+	if err := tx.QueryRowContext(ctx, s.d.rebind(`INSERT INTO polls
 		(provider, provider_type, location_name, started_at, finished_at, duration_ms, status, error, reading_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`),
 		r.Provider, r.ProviderType, r.Location.Name, formatTime(r.StartedAt), formatTime(r.FinishedAt),
-		r.FinishedAt.Sub(r.StartedAt).Milliseconds(), status, errText, len(r.Forecasts))
-	if err != nil {
+		r.FinishedAt.Sub(r.StartedAt).Milliseconds(), status, errText, len(r.Forecasts)).Scan(&pollID); err != nil {
 		return 0, fmt.Errorf("insert poll: %w", err)
-	}
-	pollID, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
 	}
 
 	if len(r.Forecasts) > 0 {
 		placeholders := strings.TrimSuffix(strings.Repeat("?, ", 32), ", ")
-		stmt, err := tx.PrepareContext(ctx, "INSERT INTO readings ("+readingColumns+") VALUES ("+placeholders+")")
+		stmt, err := tx.PrepareContext(ctx, s.d.rebind("INSERT INTO readings ("+readingColumns+") VALUES ("+placeholders+")"))
 		if err != nil {
 			return 0, fmt.Errorf("prepare reading insert: %w", err)
 		}
@@ -183,7 +104,7 @@ func (w *where) String() string {
 	return " WHERE " + strings.Join(w.conds, " AND ")
 }
 
-func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
+func (s *SQLDB) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 	var w where
 	if f.Provider != "" {
 		w.add("provider = ?", f.Provider)
@@ -196,12 +117,12 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 	}
 	q := `SELECT id, provider, provider_type, location_name, started_at, finished_at, duration_ms,
 		status, COALESCE(error, ''), reading_count,
-		(SELECT GROUP_CONCAT(DISTINCT kind) FROM readings WHERE poll_id = polls.id) AS kinds
+		(SELECT ` + s.d.distinctKinds + ` FROM readings WHERE poll_id = polls.id) AS kinds
 		FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
-	rows, err := s.db.QueryContext(ctx, q, w.args...)
+	rows, err := s.db.QueryContext(ctx, s.d.rebind(q), w.args...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +151,7 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 	return out, rows.Err()
 }
 
-func (s *SQLite) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error) {
+func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error) {
 	var w where
 	if f.Provider != "" {
 		w.add("provider = ?", f.Provider)
@@ -264,7 +185,7 @@ func (s *SQLite) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRe
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
-	rows, err := s.db.QueryContext(ctx, q, w.args...)
+	rows, err := s.db.QueryContext(ctx, s.d.rebind(q), w.args...)
 	if err != nil {
 		return nil, err
 	}

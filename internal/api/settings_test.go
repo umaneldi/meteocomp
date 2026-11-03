@@ -20,7 +20,7 @@ import (
 )
 
 // newTestServer starts a server with no locations, so no provider is ever fetched.
-func newTestServer(t *testing.T) (*httptest.Server, *store.SQLite) {
+func newTestServer(t *testing.T) (*httptest.Server, *store.SQLDB) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	st, err := store.OpenSQLite(ctx, filepath.Join(t.TempDir(), "api.db"))

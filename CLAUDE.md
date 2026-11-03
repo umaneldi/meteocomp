@@ -17,14 +17,16 @@ database and edited from an embedded web UI.
 
 ## Layout
 
-- `cmd/meteocomp` — entry point: opens the store, loads settings (DB, else optional seed file, else
+- `cmd/meteocomp` — entry point: opens the store (`DATABASE_URI`, else SQLite at `METEOCOMP_DB_PATH`), loads settings (DB, else optional seed file, else
   defaults), starts the poller manager and HTTP server.
 - `internal/weather` — domain types: `Location`, `Forecast`, normalized `Condition`, `Provider` interface.
 - `internal/config` — `Settings` types, defaults and validation; optional YAML seed file loading
   (with `${ENV}` / `${ENV:-default}` expansion), used only to seed an empty database (e.g. CI).
 - `internal/providers` — provider registry and shared HTTP helper; one sub-package per provider.
   `internal/providers/all` blank-imports every provider so they register themselves.
-- `internal/store` — `Store` interface and SQLite implementation (`schema.sql` is embedded).
+- `internal/store` — `Store` interface and its `database/sql` implementation for SQLite and PostgreSQL,
+  selected by the `DATABASE_URI` scheme. `schema_sqlite.sql` / `schema_postgres.sql` are embedded and
+  must be kept in sync; queries use `?` placeholders, rebound per dialect.
 - `internal/poller` — one goroutine per provider instance, polling all locations at the shared interval,
   resuming from the last recorded poll. `Manager` swaps pollers when settings change.
 - `internal/api` — HTTP handlers, including `GET/PUT /api/v1/settings` (API keys are write-only).

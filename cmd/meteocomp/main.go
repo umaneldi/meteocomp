@@ -25,11 +25,13 @@ func main() {
 	configPath := flag.String("config", os.Getenv("METEOCOMP_CONFIG"),
 		"optional YAML file used to seed the settings of an empty database (env METEOCOMP_CONFIG)")
 	addr := flag.String("addr", os.Getenv("METEOCOMP_HTTP_ADDR"), "HTTP listen address (env METEOCOMP_HTTP_ADDR, default :8080)")
+	dbURI := flag.String("database-uri", os.Getenv("DATABASE_URI"),
+		"database URI: postgres://user:pass@host/db or sqlite:///path/to.db (env DATABASE_URI; takes precedence over -db)")
 	dbPath := flag.String("db", os.Getenv("METEOCOMP_DB_PATH"), "SQLite database path (env METEOCOMP_DB_PATH, default meteocomp.db)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(*configPath, *addr, *dbPath, log); err != nil {
+	if err := run(*configPath, *addr, *dbURI, *dbPath, log); err != nil {
 		log.Error("fatal", "error", err)
 		os.Exit(1)
 	}
@@ -44,7 +46,7 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func run(configPath, addr, dbPath string, log *slog.Logger) error {
+func run(configPath, addr, dbURI, dbPath string, log *slog.Logger) error {
 	var seed *config.Config
 	if configPath != "" {
 		var err error
@@ -52,15 +54,18 @@ func run(configPath, addr, dbPath string, log *slog.Logger) error {
 			return err
 		}
 		addr = firstNonEmpty(addr, seed.HTTP.Addr)
-		dbPath = firstNonEmpty(dbPath, seed.Database.Path)
+		if dbURI == "" && dbPath == "" {
+			dbURI, dbPath = seed.Database.URI, seed.Database.Path
+		}
 	}
 	addr = firstNonEmpty(addr, ":8080")
-	dbPath = firstNonEmpty(dbPath, "meteocomp.db")
+	// A URI (SQLite or PostgreSQL) wins over a plain SQLite path.
+	dbURI = firstNonEmpty(dbURI, dbPath, "meteocomp.db")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.OpenSQLite(ctx, dbPath)
+	st, err := store.Open(ctx, dbURI)
 	if err != nil {
 		return err
 	}

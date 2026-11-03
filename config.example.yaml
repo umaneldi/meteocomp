@@ -4,8 +4,9 @@
 # ${ENV_VARS} and ${ENV_VARS:-default} are expanded at load time.
 http:
   addr: ":8080"            # overridden by -addr / METEOCOMP_HTTP_ADDR
-database:
-  path: "meteocomp.db"     # overridden by -db / METEOCOMP_DB_PATH
+database:                  # both overridden by -database-uri / DATABASE_URI and -db / METEOCOMP_DB_PATH
+  # uri: "postgres://meteocomp:secret@localhost:5432/meteocomp?sslmode=disable"
+  path: "meteocomp.db"     # SQLite file, used when uri is empty
 
 # Shared by all providers. Minimum 1m.
 poll_interval: 1h

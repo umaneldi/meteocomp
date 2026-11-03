@@ -37,7 +37,9 @@ type HTTPConfig struct {
 }
 
 type DatabaseConfig struct {
-	Path string `yaml:"path"`
+	// URI is a postgres:// or sqlite:// URI; it takes precedence over Path.
+	URI  string `yaml:"uri"`
+	Path string `yaml:"path"` // SQLite file path
 }
 
 // Settings are the runtime settings persisted in the database.

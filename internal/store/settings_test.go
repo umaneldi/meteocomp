@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -11,13 +10,10 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-func TestSettingsRoundTrip(t *testing.T) {
+func TestSettingsRoundTrip(t *testing.T) { forEachBackend(t, testSettingsRoundTrip) }
+
+func testSettingsRoundTrip(t *testing.T, st *SQLDB) {
 	ctx := context.Background()
-	st, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
 
 	if _, found, err := st.LoadSettings(ctx); err != nil || found {
 		t.Fatalf("empty db: found=%v err=%v", found, err)
@@ -51,13 +47,10 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLastPollTimes(t *testing.T) {
+func TestLastPollTimes(t *testing.T) { forEachBackend(t, testLastPollTimes) }
+
+func testLastPollTimes(t *testing.T, st *SQLDB) {
 	ctx := context.Background()
-	st, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "l.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
 	t1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	for _, at := range []time.Time{t1, t1.Add(time.Hour)} {
 		if _, err := st.RecordPoll(ctx, PollResult{Provider: "p", ProviderType: "x",

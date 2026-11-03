@@ -73,7 +73,7 @@ Two polls for the same provider/location, six hours apart:
 
 #### Measurement columns
 
-All optional (`*float64` in Go, `REAL` in SQLite). `NULL` means the provider did not supply
+All optional (`*float64` in Go, `REAL` in SQLite, `DOUBLE PRECISION` in PostgreSQL). `NULL` means the provider did not supply
 the value — not zero.
 
 | Column | Unit |

@@ -3,20 +3,16 @@ package store
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-func TestRecordAndList(t *testing.T) {
+func TestRecordAndList(t *testing.T) { forEachBackend(t, testRecordAndList) }
+
+func testRecordAndList(t *testing.T, s *SQLDB) {
 	ctx := context.Background()
-	s, err := OpenSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
 
 	loc := weather.Location{Name: "paris", City: "Paris", Country: "FR", Latitude: 48.85, Longitude: 2.35}
 	start := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
