@@ -127,9 +127,9 @@ func TestFetchAll(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// Return data for both stations in a single response.
-		fmt.Fprintf(w, `{"status":"OK","errors":[],"data":[],"hourly":{%q:%s,%q:%s}}`,
+		fmt.Fprintf(w, `{"status":"OK","errors":[],"data":[],"hourly":{%q:%s,%q:%s,"_params":["id_station","dh_utc","temperature"]}}`,
 			stationA, `[{"dh_utc":"`+ts+`","temperature":12.3,"humidite":85.0,"pression":null,"vent_moyen":null,"vent_rafales":null,"vent_direction":null,"pluie_1h":null,"visibilite":null,"temps_omm":0,"uv_index":null}]`,
-			stationB, `[{"dh_utc":"`+ts+`","temperature":22.1,"humidite":60.0,"pression":null,"vent_moyen":null,"vent_rafales":null,"vent_direction":null,"pluie_1h":null,"visibilite":null,"temps_omm":0,"uv_index":null}]`,
+			stationB, `[{"dh_utc":"`+ts+`","temperature":"22.1","humidite":"60","pression":null,"vent_moyen":null,"vent_rafales":null,"vent_direction":null,"pluie_1h":null,"visibilite":"","temps_omm":"0","uv_index":null}]`,
 		)
 	}))
 	defer srv.Close()
