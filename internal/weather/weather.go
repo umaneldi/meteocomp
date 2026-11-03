@@ -9,11 +9,12 @@ import (
 
 // Location is a place forecasts are requested for.
 type Location struct {
-	Name      string  `json:"name" yaml:"name"`
-	City      string  `json:"city" yaml:"city"`
-	Country   string  `json:"country" yaml:"country"`
-	Latitude  float64 `json:"latitude" yaml:"latitude"`
-	Longitude float64 `json:"longitude" yaml:"longitude"`
+	Name      string  `json:"name"                 yaml:"name"`
+	City      string  `json:"city"                 yaml:"city"`
+	Country   string  `json:"country"              yaml:"country"`
+	Latitude  float64 `json:"latitude"             yaml:"latitude"`
+	Longitude float64 `json:"longitude"            yaml:"longitude"`
+	StationID string  `json:"station_id,omitempty" yaml:"station_id,omitempty"`
 }
 
 // Condition is a normalized sky/precipitation condition shared by all providers.

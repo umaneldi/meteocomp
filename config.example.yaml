@@ -11,8 +11,8 @@ database:
 poll_interval: 1h
 
 locations:
-  - { name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522 }
-  - { name: london, city: London, country: GB, latitude: 51.5074, longitude: -0.1278 }
+  - { name: castanet, city: Castanet-Tolosan, country: FR, latitude: 43.52, longitude: 1.512, station_id: "000PU" }
+  - { name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522, station_id: "07156" }
 
 # Any number of provider instances. The same type may appear several times
 # with different names, keys or options. Available types:
@@ -22,7 +22,7 @@ locations:
 #   openweathermap  api_key needed;  5 day / 3 hour forecast
 #   weatherapi      api_key needed;  options: days (1-14, default 3)
 #   infoclimat      api_key (token) needed; hourly station observations;
-#                   options: station_id (required), past_days (1-30, default 7)
+#                   options: past_days (1-30, default 7); station_id comes from the location
 providers:
   - name: open-meteo
     type: openmeteo
@@ -45,11 +45,10 @@ providers:
     enabled: false
 
   # Infoclimat station observations (requires a token from https://www.infoclimat.fr/opendata/).
-  # One instance per station; configure multiple instances to cover several locations.
+  # One instance covers all locations; each location must have a station_id set.
   - name: infoclimat
     type: infoclimat
     # api_key: "..."   # Infoclimat token
     options:
-      station_id: "000PU"   # Castanet-Tolosan
       past_days: 7
     enabled: false

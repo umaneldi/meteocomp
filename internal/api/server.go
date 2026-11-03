@@ -25,10 +25,11 @@ const (
 )
 
 type Server struct {
-	store   store.Store
-	pollers *poller.Manager
-	log     *slog.Logger
-	baseCtx context.Context // lifetime of the service; used for manually triggered polls
+	store    store.Store
+	pollers  *poller.Manager
+	log      *slog.Logger
+	baseCtx  context.Context // lifetime of the service; used for manually triggered polls
+	stations stationCache
 
 	// mu guards settings and serializes ApplySettings.
 	mu       sync.RWMutex
@@ -53,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/polls", s.listPolls)
 	mux.HandleFunc("POST /api/v1/polls", s.triggerPoll)
 	mux.HandleFunc("GET /api/v1/readings", s.listReadings)
+	mux.HandleFunc("GET /api/v1/stations", s.listStations)
 	return mux
 }
 

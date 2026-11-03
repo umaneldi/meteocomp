@@ -52,23 +52,43 @@ func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
 
 // migrate handles one-time schema evolution from older database layouts.
 func migrate(ctx context.Context, db *sql.DB) error {
+	// Migration 1: rename forecasts table and add kind column.
 	var n int
 	if err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='forecasts'`).Scan(&n); err != nil {
 		return err
 	}
-	if n == 0 {
-		return nil // fresh database or already migrated
+	if n > 0 {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE forecasts RENAME TO readings`); err != nil {
+			return fmt.Errorf("rename forecasts: %w", err)
+		}
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE readings ADD COLUMN kind TEXT NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast', 'observation'))`); err != nil {
+			return fmt.Errorf("add kind column: %w", err)
+		}
+		if _, err := db.ExecContext(ctx, `ALTER TABLE polls RENAME COLUMN forecast_count TO reading_count`); err != nil {
+			return fmt.Errorf("rename forecast_count: %w", err)
+		}
 	}
-	if _, err := db.ExecContext(ctx, `ALTER TABLE forecasts RENAME TO readings`); err != nil {
-		return fmt.Errorf("rename forecasts: %w", err)
+
+	// Migration 2: add station_id to existing locations tables.
+	// Skip if the locations table doesn't exist yet (fresh DB gets the column from schema.sql).
+	var tableExists int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='locations'`).Scan(&tableExists); err != nil {
+		return err
 	}
-	if _, err := db.ExecContext(ctx,
-		`ALTER TABLE readings ADD COLUMN kind TEXT NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast', 'observation'))`); err != nil {
-		return fmt.Errorf("add kind column: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, `ALTER TABLE polls RENAME COLUMN forecast_count TO reading_count`); err != nil {
-		return fmt.Errorf("rename forecast_count: %w", err)
+	if tableExists > 0 {
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pragma_table_info('locations') WHERE name='station_id'`).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.ExecContext(ctx,
+				`ALTER TABLE locations ADD COLUMN station_id TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add station_id column: %w", err)
+			}
+		}
 	}
 	return nil
 }

@@ -62,18 +62,18 @@
       </header>
       <div class="search">
         <label class="field grow">
-          <span>Find a place</span>
-          <input id="geo-q" type="search" placeholder="City name, e.g. Lyon" autocomplete="off" spellcheck="false"
+          <span>Station name or ID</span>
+          <input id="geo-q" type="search" placeholder="e.g. Castanet-Tolosan or 000PU" autocomplete="off" spellcheck="false"
                  role="combobox" aria-expanded="false" aria-controls="geo-results" aria-autocomplete="list">
         </label>
         <button type="button" class="btn ghost" id="add-location">Add manually</button>
       </div>
       <ul class="geo-results" id="geo-results" role="listbox" hidden></ul>
-      <p class="hint small">Place search uses the Open-Meteo geocoding service from your browser.</p>
+      <p class="hint small">Station search uses the Infoclimat station list.</p>
       <div class="table-wrap">
         <table class="grid" id="locations-table">
           <thead>
-            <tr><th>Name</th><th>City</th><th>Country</th><th class="num">Latitude</th><th class="num">Longitude</th><th><span class="sr">Actions</span></th></tr>
+            <tr><th>Name</th><th>City</th><th>Country</th><th class="num">Latitude</th><th class="num">Longitude</th><th>Station ID</th><th><span class="sr">Actions</span></th></tr>
           </thead>
           <tbody id="locations-body"></tbody>
         </table>

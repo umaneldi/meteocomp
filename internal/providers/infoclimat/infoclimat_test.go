@@ -67,13 +67,13 @@ func TestFetch(t *testing.T) {
 		Name:    "ic",
 		APIKey:  "tok",
 		BaseURL: srv.URL + "/",
-		Options: map[string]any{"station_id": stationID, "past_days": 1},
+		Options: map[string]any{"past_days": 1},
 	}, srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := p.Fetch(context.Background(), weather.Location{Name: "paris", Latitude: 48.85, Longitude: 2.35})
+	got, err := p.Fetch(context.Background(), weather.Location{Name: "paris", StationID: stationID, Latitude: 48.85, Longitude: 2.35})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,16 +124,11 @@ func TestFutureTimestampFiltered(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, err := New(config.ProviderConfig{
-		Name:    "ic",
-		APIKey:  "tok",
-		BaseURL: srv.URL + "/",
-		Options: map[string]any{"station_id": stationID},
-	}, srv.Client())
+	p, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok", BaseURL: srv.URL + "/"}, srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.Fetch(context.Background(), weather.Location{Name: "paris"})
+	got, err := p.Fetch(context.Background(), weather.Location{Name: "paris", StationID: stationID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,20 +137,27 @@ func TestFutureTimestampFiltered(t *testing.T) {
 	}
 }
 
+func TestMissingStationID(t *testing.T) {
+	p, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok"}, http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Fetch(context.Background(), weather.Location{Name: "paris"}); err == nil {
+		t.Error("expected error for location with no station_id")
+	}
+}
+
 func TestValidation(t *testing.T) {
 	client := http.DefaultClient
-	if _, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok"}, client); err == nil {
-		t.Error("missing station_id: expected error")
-	}
-	if _, err := New(config.ProviderConfig{Name: "ic", Options: map[string]any{"station_id": "07156"}}, client); err == nil {
+	if _, err := New(config.ProviderConfig{Name: "ic"}, client); err == nil {
 		t.Error("missing api_key: expected error")
 	}
 	if _, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok",
-		Options: map[string]any{"station_id": "07156", "past_days": 31}}, client); err == nil {
+		Options: map[string]any{"past_days": 31}}, client); err == nil {
 		t.Error("past_days=31: expected error")
 	}
 	if _, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok",
-		Options: map[string]any{"station_id": "07156", "past_days": 0}}, client); err == nil {
+		Options: map[string]any{"past_days": 0}}, client); err == nil {
 		t.Error("past_days=0: expected error")
 	}
 }

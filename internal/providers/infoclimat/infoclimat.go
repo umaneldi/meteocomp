@@ -31,33 +31,28 @@ const (
 
 func init() {
 	providers.Register(Type, New, providers.Info{
-		Description:    "Infoclimat hourly weather station observations. Requires a token.",
+		Description:    "Infoclimat hourly weather station observations. Requires a token. Each location must have a station_id configured.",
 		RequiresAPIKey: true,
 		SignupURL:      "https://www.infoclimat.fr/opendata/",
 		Options: []providers.Option{
-			{Name: "station_id", Kind: "string", Description: `Infoclimat station ID (e.g. "07156")`},
 			{Name: "past_days", Kind: "int", Default: "7", Description: "Days of past observations to fetch (1-30, default 7)"},
 		},
 	})
 }
 
 // Provider fetches hourly weather station observations from the Infoclimat opendata API.
+// The station to query is taken from each location's StationID field, not from provider options.
 type Provider struct {
-	name      string
-	token     string
-	baseURL   string
-	stationID string
-	pastDays  int
-	client    *http.Client
+	name     string
+	token    string
+	baseURL  string
+	pastDays int
+	client   *http.Client
 }
 
 func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("provider %q: api_key (token) is required", cfg.Name)
-	}
-	stationID := cfg.StringOption("station_id", "")
-	if stationID == "" {
-		return nil, fmt.Errorf("provider %q: station_id option is required", cfg.Name)
 	}
 	pastDays := cfg.IntOption("past_days", defaultPastDays)
 	if pastDays < 1 || pastDays > maxPastDays {
@@ -68,12 +63,11 @@ func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, erro
 		base = defaultBaseURL
 	}
 	return &Provider{
-		name:      cfg.Name,
-		token:     cfg.APIKey,
-		baseURL:   base,
-		stationID: stationID,
-		pastDays:  pastDays,
-		client:    client,
+		name:     cfg.Name,
+		token:    cfg.APIKey,
+		baseURL:  base,
+		pastDays: pastDays,
+		client:   client,
 	}, nil
 }
 
@@ -106,6 +100,10 @@ type rawReading struct {
 }
 
 func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.Forecast, error) {
+	if loc.StationID == "" {
+		return nil, fmt.Errorf("provider %q: location %q has no station_id configured", p.name, loc.Name)
+	}
+
 	now := time.Now().UTC()
 	start := now.AddDate(0, 0, -p.pastDays).Format("2006-01-02")
 	end := now.Format("2006-01-02")
@@ -120,16 +118,16 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 
 	// Build the URL with raw (un-encoded) brackets for the stations[] parameter,
 	// which is what the Infoclimat API expects.
-	rawURL := p.baseURL + "?" + q.Encode() + "&stations[]=" + url.QueryEscape(p.stationID)
+	rawURL := p.baseURL + "?" + q.Encode() + "&stations[]=" + url.QueryEscape(loc.StationID)
 
 	var r apiResponse
 	if err := providers.GetJSON(ctx, p.client, rawURL, &r); err != nil {
 		return nil, err
 	}
 
-	stationReadings, ok := r.Hourly[p.stationID]
+	stationReadings, ok := r.Hourly[loc.StationID]
 	if !ok {
-		return nil, fmt.Errorf("provider %q: station %q not found in response", p.name, p.stationID)
+		return nil, fmt.Errorf("provider %q: station %q not found in response", p.name, loc.StationID)
 	}
 
 	out := make([]weather.Forecast, 0, len(stationReadings))

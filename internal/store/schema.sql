@@ -75,12 +75,13 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Locations to poll, in display order.
 CREATE TABLE IF NOT EXISTS locations (
-    name      TEXT    PRIMARY KEY,
-    position  INTEGER NOT NULL,
-    city      TEXT    NOT NULL DEFAULT '',
-    country   TEXT    NOT NULL DEFAULT '',
-    latitude  REAL    NOT NULL,
-    longitude REAL    NOT NULL
+    name       TEXT    PRIMARY KEY,
+    position   INTEGER NOT NULL,
+    city       TEXT    NOT NULL DEFAULT '',
+    country    TEXT    NOT NULL DEFAULT '',
+    latitude   REAL    NOT NULL,
+    longitude  REAL    NOT NULL,
+    station_id TEXT    NOT NULL DEFAULT ''
 );
 
 -- Provider instances, in display order.

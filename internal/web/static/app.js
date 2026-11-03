@@ -3,7 +3,6 @@
 "use strict";
 
 const PRESETS = ["15m", "30m", "1h", "3h", "6h", "12h"];
-const GEO_URL = "https://geocoding-api.open-meteo.com/v1/search";
 
 const $ = (id) => document.getElementById(id);
 
@@ -117,6 +116,7 @@ function serialize() {
       country: l.country.trim().toUpperCase(),
       latitude: Number(l.latitude),
       longitude: Number(l.longitude),
+      station_id: (l.station_id || "").trim(),
     })),
     providers: state.providers.map((p) => {
       const d = { name: p.name.trim(), type: p.type, enabled: p.enabled, options: cleanOptions(p) };
@@ -223,6 +223,7 @@ function renderLocations(freshId) {
       h("td", {}, bind("country", { class: "cc", maxlength: "2", placeholder: "FR" })),
       h("td", { class: "num" }, coord("latitude", 90)),
       h("td", { class: "num" }, coord("longitude", 180)),
+      h("td", {}, bind("station_id", { class: "mono", placeholder: "000PU" })),
       h("td", { class: "num" }, h("button", {
         type: "button", class: "icon-btn", title: "Remove location", "aria-label": `Remove ${l.name}`,
         onclick: () => { state.locations = state.locations.filter((x) => x !== l); renderLocations(); updateDirty(); },
@@ -240,7 +241,7 @@ function checkCoord(el, key) {
 
 function addLocation(loc) {
   const taken = new Set(state.locations.map((l) => l.name));
-  const l = { _id: ++uid, name: "", city: "", country: "", latitude: "", longitude: "", ...loc };
+  const l = { _id: ++uid, name: "", city: "", country: "", latitude: "", longitude: "", station_id: "", ...loc };
   if (loc.name) l.name = uniqueName(loc.name, taken);
   state.locations.push(l);
   renderLocations(l._id);
@@ -248,87 +249,86 @@ function addLocation(loc) {
   return l;
 }
 
-// Place search (Open-Meteo geocoding, called from the browser).
-const geo = { results: [], active: -1, timer: 0, seq: 0 };
+// Station search (Infoclimat station list via /api/v1/stations).
+const sta = { results: [], active: -1, timer: 0, seq: 0 };
 
-function setupGeoSearch() {
-  const q = $("geo-q");
-  const list = $("geo-results");
-  q.addEventListener("input", () => {
-    clearTimeout(geo.timer);
+function setupStationSearch() {
+  const q = $(“geo-q”);
+  const list = $(“geo-results”);
+  q.addEventListener(“input”, () => {
+    clearTimeout(sta.timer);
     const term = q.value.trim();
-    if (term.length < 2) return closeGeo();
-    geo.timer = setTimeout(() => searchGeo(term), 250);
+    if (term.length < 2) return closeStation();
+    sta.timer = setTimeout(() => searchStations(term), 250);
   });
-  q.addEventListener("keydown", (e) => {
+  q.addEventListener(“keydown”, (e) => {
     if (list.hidden) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (e.key === “ArrowDown” || e.key === “ArrowUp”) {
       e.preventDefault();
-      const n = geo.results.length;
+      const n = sta.results.length;
       if (!n) return;
-      geo.active = (geo.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
-      renderGeo();
-    } else if (e.key === "Enter" && geo.active >= 0) {
+      sta.active = (sta.active + (e.key === “ArrowDown” ? 1 : -1) + n) % n;
+      renderStations();
+    } else if (e.key === “Enter” && sta.active >= 0) {
       e.preventDefault();
-      pickGeo(geo.results[geo.active]);
-    } else if (e.key === "Escape") {
-      closeGeo();
+      pickStation(sta.results[sta.active]);
+    } else if (e.key === “Escape”) {
+      closeStation();
     }
   });
-  q.addEventListener("blur", () => setTimeout(closeGeo, 150));
+  q.addEventListener(“blur”, () => setTimeout(closeStation, 150));
 }
 
-async function searchGeo(term) {
-  const seq = ++geo.seq;
+async function searchStations(term) {
+  const seq = ++sta.seq;
   try {
-    const url = `${GEO_URL}?${new URLSearchParams({ name: term, count: "8", language: "en", format: "json" })}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (seq !== geo.seq) return; // a newer search is in flight
-    geo.results = data.results || [];
-    geo.active = geo.results.length ? 0 : -1;
-    renderGeo(true);
+    const data = await api(“GET”, `/api/v1/stations?q=${encodeURIComponent(term)}`);
+    if (seq !== sta.seq) return;
+    sta.results = Array.isArray(data) ? data : [];
+    sta.active = sta.results.length ? 0 : -1;
+    renderStations(true);
   } catch {
-    if (seq !== geo.seq) return;
-    geo.results = [];
-    renderGeo(true, "Place search unavailable — use “Add manually”.");
+    if (seq !== sta.seq) return;
+    sta.results = [];
+    renderStations(true, “Station search unavailable — use “Add manually”.”);
   }
 }
 
-function renderGeo(open = false, note) {
-  const list = $("geo-results");
-  const items = geo.results.map((r, i) => h("li", {
-    role: "option", id: `geo-${i}`, "aria-selected": String(i === geo.active),
-    onmousedown: (e) => { e.preventDefault(); pickGeo(r); },
+function renderStations(open = false, note) {
+  const list = $(“geo-results”);
+  const items = sta.results.map((s, i) => h(“li”, {
+    role: “option”, id: `geo-${i}`, “aria-selected”: String(i === sta.active),
+    onmousedown: (e) => { e.preventDefault(); pickStation(s); },
   },
-  h("span", {}, [r.name, r.admin1, r.country].filter(Boolean).join(", ")),
-  h("span", { class: "geo-meta" }, `${r.latitude.toFixed(2)}, ${r.longitude.toFixed(2)}`)));
-  if (!items.length) items.push(h("li", { class: "geo-none", role: "option", "aria-disabled": "true" }, note || "No matching place."));
+  h(“span”, {}, `${s.id} — ${s.name}${s.country ? ` (${s.country})` : “”}`),
+  h(“span”, { class: “geo-meta” }, `${s.latitude.toFixed(2)}, ${s.longitude.toFixed(2)}${s.elevation != null ? ` · ${s.elevation} m` : “”}`)));
+  if (!items.length) items.push(h(“li”, { class: “geo-none”, role: “option”, “aria-disabled”: “true” }, note || “No matching station.”));
   list.replaceChildren(...items);
   if (open) list.hidden = false;
-  $("geo-q").setAttribute("aria-expanded", String(!list.hidden));
-  if (geo.active >= 0) $("geo-q").setAttribute("aria-activedescendant", `geo-${geo.active}`);
-  else $("geo-q").removeAttribute("aria-activedescendant");
+  $(“geo-q”).setAttribute(“aria-expanded”, String(!list.hidden));
+  if (sta.active >= 0) $(“geo-q”).setAttribute(“aria-activedescendant”, `geo-${sta.active}`);
+  else $(“geo-q”).removeAttribute(“aria-activedescendant”);
 }
 
-function closeGeo() {
-  $("geo-results").hidden = true;
-  $("geo-q").setAttribute("aria-expanded", "false");
-  geo.active = -1;
+function closeStation() {
+  $(“geo-results”).hidden = true;
+  $(“geo-q”).setAttribute(“aria-expanded”, “false”);
+  sta.active = -1;
 }
 
-function pickGeo(r) {
-  if (!r) return;
+function pickStation(s) {
+  if (!s) return;
   addLocation({
-    name: slug(r.name),
-    city: r.name,
-    country: (r.country_code || "").toUpperCase(),
-    latitude: Math.round(r.latitude * 1e4) / 1e4,
-    longitude: Math.round(r.longitude * 1e4) / 1e4,
+    name: slug(s.name),
+    city: s.name,
+    country: (s.country || “”).toUpperCase(),
+    latitude: Math.round(s.latitude * 1e4) / 1e4,
+    longitude: Math.round(s.longitude * 1e4) / 1e4,
+    station_id: s.id,
   });
-  $("geo-q").value = "";
-  closeGeo();
-  toast(`Added ${r.name}. Save to start polling it.`);
+  $(“geo-q”).value = “”;
+  closeStation();
+  toast(`Added ${s.name}. Save to start polling it.`);
 }
 
 // ── Providers ─────────────────────────────────────────────────────────────
@@ -773,7 +773,7 @@ async function boot() {
   renderAll();
   updateDirty();
   setupForecast();
-  setupGeoSearch();
+  setupStationSearch();
 
   $("interval").addEventListener("input", (e) => { state.interval = e.target.value; updateDirty(); });
   $("add-location").addEventListener("click", () => {

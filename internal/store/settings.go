@@ -31,14 +31,14 @@ func (s *SQLite) LoadSettings(ctx context.Context) (*config.Settings, bool, erro
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, city, country, latitude, longitude FROM locations ORDER BY position, name`)
+		`SELECT name, city, country, latitude, longitude, station_id FROM locations ORDER BY position, name`)
 	if err != nil {
 		return nil, false, fmt.Errorf("load locations: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var l weather.Location
-		if err := rows.Scan(&l.Name, &l.City, &l.Country, &l.Latitude, &l.Longitude); err != nil {
+		if err := rows.Scan(&l.Name, &l.City, &l.Country, &l.Latitude, &l.Longitude, &l.StationID); err != nil {
 			return nil, false, err
 		}
 		out.Locations = append(out.Locations, l)
@@ -85,8 +85,8 @@ func (s *SQLite) SaveSettings(ctx context.Context, cfg config.Settings) error {
 		return err
 	}
 	for i, l := range cfg.Locations {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO locations (name, position, city, country, latitude, longitude)
-			VALUES (?, ?, ?, ?, ?, ?)`, l.Name, i, l.City, l.Country, l.Latitude, l.Longitude); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO locations (name, position, city, country, latitude, longitude, station_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`, l.Name, i, l.City, l.Country, l.Latitude, l.Longitude, l.StationID); err != nil {
 			return fmt.Errorf("save location %q: %w", l.Name, err)
 		}
 	}
