@@ -9,6 +9,8 @@
 //   - models (string, optional): comma-separated Open-Meteo model names passed as the
 //     "models" query parameter, e.g. "arome_france" on the meteofrance endpoint.
 //   - forecast_days (int, default 7, max 16)
+//   - past_days (int, default 0, max 92): days of past ERA5/analysis data to include
+//     alongside the forecast. Past data points are tagged as observations (kind="observation").
 //
 // Endpoints only return the variables and days their models cover. Points with no
 // value at all (e.g. beyond the model horizon) are dropped.
@@ -44,6 +46,7 @@ func init() {
 				Description: `API path after /v1/: "forecast" (best models blend), "meteofrance", "dwd-icon", "gfs", "ecmwf", "metno"...`},
 			{Name: "models", Kind: "string", Description: `Optional comma-separated model names, e.g. "arome_france"`},
 			{Name: "forecast_days", Kind: "int", Default: "7", Description: "Days of forecast, 1-16"},
+			{Name: "past_days", Kind: "int", Default: "0", Description: "Days of past ERA5/analysis observations to include (0-92). Tagged as kind=observation."},
 		},
 	})
 }
@@ -53,6 +56,7 @@ type Provider struct {
 	url          string // base URL + "/" + endpoint
 	models       string
 	forecastDays int
+	pastDays     int
 	client       *http.Client
 }
 
@@ -70,10 +74,14 @@ func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, erro
 		url:          base + "/" + endpoint,
 		models:       cfg.StringOption("models", ""),
 		forecastDays: cfg.IntOption("forecast_days", 7),
+		pastDays:     cfg.IntOption("past_days", 0),
 		client:       client,
 	}
 	if p.forecastDays < 1 || p.forecastDays > 16 {
 		return nil, fmt.Errorf("provider %q: forecast_days must be between 1 and 16", cfg.Name)
+	}
+	if p.pastDays < 0 || p.pastDays > 92 {
+		return nil, fmt.Errorf("provider %q: past_days must be between 0 and 92", cfg.Name)
 	}
 	return p, nil
 }
@@ -134,6 +142,9 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 	q.Set("timezone", "UTC")
 	q.Set("wind_speed_unit", "kmh")
 	q.Set("forecast_days", strconv.Itoa(p.forecastDays))
+	if p.pastDays > 0 {
+		q.Set("past_days", strconv.Itoa(p.pastDays))
+	}
 	if p.models != "" {
 		q.Set("models", p.models)
 	}
@@ -171,6 +182,7 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			f.VisibilityKm = new(*v / 1000)
 		}
 		setCondition(&f, atInt(h.WeatherCode, i))
+		f.Kind = kindFor(t)
 		if !isEmpty(f) {
 			out = append(out, f)
 		}
@@ -197,11 +209,20 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			UVIndex:                     at(d.UVIndexMax, i),
 		}
 		setCondition(&f, atInt(d.WeatherCode, i))
+		f.Kind = kindFor(t)
 		if !isEmpty(f) {
 			out = append(out, f)
 		}
 	}
 	return out, nil
+}
+
+// kindFor returns KindObservation when the data point's time is in the past.
+func kindFor(t time.Time) weather.Kind {
+	if t.Before(time.Now()) {
+		return weather.KindObservation
+	}
+	return weather.KindForecast
 }
 
 // isEmpty reports whether f carries no value at all, which happens past the

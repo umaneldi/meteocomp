@@ -39,6 +39,10 @@ func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	if err := migrate(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
@@ -46,11 +50,35 @@ func OpenSQLite(ctx context.Context, path string) (*SQLite, error) {
 	return &SQLite{db: db}, nil
 }
 
+// migrate handles one-time schema evolution from older database layouts.
+func migrate(ctx context.Context, db *sql.DB) error {
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='forecasts'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil // fresh database or already migrated
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE forecasts RENAME TO readings`); err != nil {
+		return fmt.Errorf("rename forecasts: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE readings ADD COLUMN kind TEXT NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast', 'observation'))`); err != nil {
+		return fmt.Errorf("add kind column: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE polls RENAME COLUMN forecast_count TO reading_count`); err != nil {
+		return fmt.Errorf("rename forecast_count: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLite) Close() error { return s.db.Close() }
 
-const forecastColumns = `poll_id, polled_at, provider, provider_type,
+// readingColumns lists the non-id columns of the readings table, in insertion order.
+const readingColumns = `poll_id, polled_at, provider, provider_type,
 	location_name, city, country, latitude, longitude,
-	forecast_time, granularity, lead_time_hours,
+	forecast_time, granularity, lead_time_hours, kind,
 	temperature_c, temperature_min_c, temperature_max_c, feels_like_c, humidity_pct, dew_point_c,
 	pressure_hpa, wind_speed_kmh, wind_gust_kmh, wind_direction_deg, cloud_cover_pct,
 	precipitation_mm, precipitation_probability_pct, snowfall_cm, uv_index, visibility_km,
@@ -68,7 +96,7 @@ func (s *SQLite) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
 		status, errText = StatusError, sql.NullString{String: r.Err.Error(), Valid: true}
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO polls
-		(provider, provider_type, location_name, started_at, finished_at, duration_ms, status, error, forecast_count)
+		(provider, provider_type, location_name, started_at, finished_at, duration_ms, status, error, reading_count)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Provider, r.ProviderType, r.Location.Name, formatTime(r.StartedAt), formatTime(r.FinishedAt),
 		r.FinishedAt.Sub(r.StartedAt).Milliseconds(), status, errText, len(r.Forecasts))
@@ -81,26 +109,30 @@ func (s *SQLite) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
 	}
 
 	if len(r.Forecasts) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?, ", 31), ", ")
-		stmt, err := tx.PrepareContext(ctx, "INSERT INTO forecasts ("+forecastColumns+") VALUES ("+placeholders+")")
+		placeholders := strings.TrimSuffix(strings.Repeat("?, ", 32), ", ")
+		stmt, err := tx.PrepareContext(ctx, "INSERT INTO readings ("+readingColumns+") VALUES ("+placeholders+")")
 		if err != nil {
-			return 0, fmt.Errorf("prepare forecast insert: %w", err)
+			return 0, fmt.Errorf("prepare reading insert: %w", err)
 		}
 		defer stmt.Close()
 		polledAt := formatTime(r.StartedAt)
 		l := r.Location
 		for _, f := range r.Forecasts {
 			lead := f.ForecastTime.Sub(r.StartedAt).Hours()
+			kind := string(f.Kind)
+			if kind == "" {
+				kind = string(weather.KindForecast)
+			}
 			if _, err := stmt.ExecContext(ctx,
 				pollID, polledAt, r.Provider, r.ProviderType,
 				l.Name, l.City, l.Country, l.Latitude, l.Longitude,
-				formatTime(f.ForecastTime), string(f.Granularity), lead,
+				formatTime(f.ForecastTime), string(f.Granularity), lead, kind,
 				f.TemperatureC, f.TemperatureMinC, f.TemperatureMaxC, f.FeelsLikeC, f.HumidityPct, f.DewPointC,
 				f.PressureHPa, f.WindSpeedKmh, f.WindGustKmh, f.WindDirectionDeg, f.CloudCoverPct,
 				f.PrecipitationMm, f.PrecipitationProbabilityPct, f.SnowfallCm, f.UVIndex, f.VisibilityKm,
 				string(f.Condition), f.ConditionCode, f.ConditionText,
 			); err != nil {
-				return 0, fmt.Errorf("insert forecast: %w", err)
+				return 0, fmt.Errorf("insert reading: %w", err)
 			}
 		}
 	}
@@ -137,7 +169,7 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 		w.add("status = ?", f.Status)
 	}
 	q := `SELECT id, provider, provider_type, location_name, started_at, finished_at, duration_ms,
-		status, COALESCE(error, ''), forecast_count FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
+		status, COALESCE(error, ''), reading_count FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
@@ -152,7 +184,7 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 		var p Poll
 		var started, finished string
 		if err := rows.Scan(&p.ID, &p.Provider, &p.ProviderType, &p.LocationName, &started, &finished,
-			&p.DurationMs, &p.Status, &p.Error, &p.ForecastCount); err != nil {
+			&p.DurationMs, &p.Status, &p.Error, &p.ReadingCount); err != nil {
 			return nil, err
 		}
 		if p.StartedAt, err = parseTime(started); err != nil {
@@ -166,7 +198,7 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 	return out, rows.Err()
 }
 
-func (s *SQLite) ListForecasts(ctx context.Context, f ForecastFilter) ([]ForecastRecord, error) {
+func (s *SQLite) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error) {
 	var w where
 	if f.Provider != "" {
 		w.add("provider = ?", f.Provider)
@@ -176,6 +208,9 @@ func (s *SQLite) ListForecasts(ctx context.Context, f ForecastFilter) ([]Forecas
 	}
 	if f.Granularity != "" {
 		w.add("granularity = ?", f.Granularity)
+	}
+	if f.Kind != "" {
+		w.add("kind = ?", f.Kind)
 	}
 	if !f.From.IsZero() {
 		w.add("forecast_time >= ?", formatTime(f.From))
@@ -192,7 +227,7 @@ func (s *SQLite) ListForecasts(ctx context.Context, f ForecastFilter) ([]Forecas
 	if f.PollID != 0 {
 		w.add("poll_id = ?", f.PollID)
 	}
-	q := "SELECT id, " + forecastColumns + " FROM forecasts" + w.String() +
+	q := "SELECT id, " + readingColumns + " FROM readings" + w.String() +
 		" ORDER BY polled_at DESC, provider, location_name, granularity, forecast_time"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
@@ -203,14 +238,14 @@ func (s *SQLite) ListForecasts(ctx context.Context, f ForecastFilter) ([]Forecas
 	}
 	defer rows.Close()
 
-	out := []ForecastRecord{}
+	out := []ReadingRecord{}
 	for rows.Next() {
-		var r ForecastRecord
-		var polledAt, forecastTime, granularity, condition string
+		var r ReadingRecord
+		var polledAt, forecastTime, granularity, kind, condition string
 		var city, country, code, text sql.NullString
 		if err := rows.Scan(&r.ID, &r.PollID, &polledAt, &r.Provider, &r.ProviderType,
 			&r.Location.Name, &city, &country, &r.Location.Latitude, &r.Location.Longitude,
-			&forecastTime, &granularity, &r.LeadTimeHours,
+			&forecastTime, &granularity, &r.LeadTimeHours, &kind,
 			&r.TemperatureC, &r.TemperatureMinC, &r.TemperatureMaxC, &r.FeelsLikeC, &r.HumidityPct, &r.DewPointC,
 			&r.PressureHPa, &r.WindSpeedKmh, &r.WindGustKmh, &r.WindDirectionDeg, &r.CloudCoverPct,
 			&r.PrecipitationMm, &r.PrecipitationProbabilityPct, &r.SnowfallCm, &r.UVIndex, &r.VisibilityKm,
@@ -226,6 +261,7 @@ func (s *SQLite) ListForecasts(ctx context.Context, f ForecastFilter) ([]Forecas
 		}
 		r.Location.City, r.Location.Country = city.String, country.String
 		r.Granularity = weather.Granularity(granularity)
+		r.Kind = weather.Kind(kind)
 		r.Condition = weather.Condition(condition)
 		r.ConditionCode, r.ConditionText = code.String, text.String
 		out = append(out, r)

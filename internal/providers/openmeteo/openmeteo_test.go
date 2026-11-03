@@ -11,23 +11,36 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-const fixture = `{
+// pastTime is a timestamp clearly in the past; futureTime is clearly in the future.
+// Using fixed dates relative to now ensures Kind classification is deterministic.
+var (
+	pastTime   = time.Now().Add(-48 * time.Hour).UTC()
+	futureTime = time.Now().Add(48 * time.Hour).UTC()
+)
+
+func pastHour() string   { return pastTime.Format("2006-01-02T15:04") }
+func futureHour() string { return futureTime.Format("2006-01-02T15:04") }
+func futureDay() string  { return futureTime.Format("2006-01-02") }
+
+func fixture() string {
+	return `{
   "hourly": {
-    "time": ["2026-11-02T00:00", "2026-11-02T01:00"],
-    "temperature_2m": [8.4, null],
-    "relative_humidity_2m": [91, 92],
+    "time": ["` + pastHour() + `", "` + futureHour() + `"],
+    "temperature_2m": [8.4, 10.0],
+    "relative_humidity_2m": [91, 80],
     "weather_code": [61, 3],
     "visibility": [12000, 8000],
     "wind_speed_10m": [14.2, 12.0]
   },
   "daily": {
-    "time": ["2026-11-02"],
+    "time": ["` + futureDay() + `"],
     "weather_code": [73],
     "temperature_2m_max": [11.2],
     "temperature_2m_min": [5.1],
     "snowfall_sum": [1.4]
   }
 }`
+}
 
 func TestFetch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +50,7 @@ func TestFetch(t *testing.T) {
 		if r.URL.Query().Get("latitude") != "48.85" || r.URL.Query().Get("forecast_days") != "2" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
-		w.Write([]byte(fixture))
+		w.Write([]byte(fixture()))
 	}))
 	defer srv.Close()
 
@@ -50,22 +63,49 @@ func TestFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("got %d forecasts, want 3", len(got))
+		t.Fatalf("got %d readings, want 3", len(got))
 	}
 
-	h0 := got[0]
-	if !h0.ForecastTime.Equal(time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)) || h0.Granularity != weather.GranularityHourly {
-		t.Errorf("h0 time/granularity: %+v", h0)
+	// Hourly entries come before daily in the response.
+	hPast, hFuture, d := got[0], got[1], got[2]
+
+	if hPast.Kind != weather.KindObservation {
+		t.Errorf("past hourly: expected KindObservation, got %q", hPast.Kind)
 	}
-	if *h0.TemperatureC != 8.4 || *h0.HumidityPct != 91 || *h0.VisibilityKm != 12 || h0.Condition != weather.ConditionRain || h0.ConditionCode != "61" {
-		t.Errorf("h0 values: %+v", h0)
+	if hFuture.Kind != weather.KindForecast {
+		t.Errorf("future hourly: expected KindForecast, got %q", hFuture.Kind)
 	}
-	if got[1].TemperatureC != nil || got[1].Condition != weather.ConditionCloudy {
-		t.Errorf("h1: %+v", got[1])
+	if d.Kind != weather.KindForecast {
+		t.Errorf("future daily: expected KindForecast, got %q", d.Kind)
 	}
-	d := got[2]
+
+	if hPast.Granularity != weather.GranularityHourly {
+		t.Errorf("hPast granularity: %+v", hPast)
+	}
+	if *hPast.TemperatureC != 8.4 || *hPast.HumidityPct != 91 || *hPast.VisibilityKm != 12 ||
+		hPast.Condition != weather.ConditionRain || hPast.ConditionCode != "61" {
+		t.Errorf("hPast values: %+v", hPast)
+	}
 	if d.Granularity != weather.GranularityDaily || *d.TemperatureMaxC != 11.2 || *d.SnowfallCm != 1.4 || d.Condition != weather.ConditionSnow {
 		t.Errorf("daily: %+v", d)
+	}
+}
+
+func TestPastDaysOption(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("past_days") != "2" {
+			t.Errorf("expected past_days=2 in query, got %q", r.URL.RawQuery)
+		}
+		w.Write([]byte(`{"hourly":{"time":[],"weather_code":[]},"daily":{"time":[],"weather_code":[]}}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(config.ProviderConfig{Name: "om", BaseURL: srv.URL, Options: map[string]any{"past_days": 2}}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Fetch(context.Background(), weather.Location{Name: "paris", Latitude: 48.85, Longitude: 2.35}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -102,7 +142,13 @@ func TestFetchEndpointAndModels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].Granularity != weather.GranularityHourly || got[1].Granularity != weather.GranularityDaily {
-		t.Fatalf("expected one hourly and one daily forecast, got %+v", got)
+		t.Fatalf("expected one hourly and one daily reading, got %+v", got)
+	}
+	// 2026-11-05 is in the future from today (2026-11-03), so both should be forecasts.
+	for _, r := range got {
+		if r.Kind != weather.KindForecast {
+			t.Errorf("expected KindForecast for future row, got %q", r.Kind)
+		}
 	}
 }
 
@@ -111,5 +157,14 @@ func TestInvalidEndpoint(t *testing.T) {
 		if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"endpoint": ep}}, http.DefaultClient); err == nil {
 			t.Errorf("endpoint %q: expected error", ep)
 		}
+	}
+}
+
+func TestInvalidPastDays(t *testing.T) {
+	if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"past_days": 100}}, http.DefaultClient); err == nil {
+		t.Error("past_days=100: expected error")
+	}
+	if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"past_days": -1}}, http.DefaultClient); err == nil {
+		t.Error("past_days=-1: expected error")
 	}
 }

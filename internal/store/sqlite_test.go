@@ -45,16 +45,16 @@ func TestRecordAndList(t *testing.T) {
 		t.Errorf("error polls: %+v", polls)
 	}
 	polls, _ = s.ListPolls(ctx, PollFilter{Provider: "om"})
-	if len(polls) != 1 || polls[0].ForecastCount != 2 || polls[0].DurationMs != 250 || !polls[0].StartedAt.Equal(start) {
+	if len(polls) != 1 || polls[0].ReadingCount != 2 || polls[0].DurationMs != 250 || !polls[0].StartedAt.Equal(start) {
 		t.Errorf("ok polls: %+v", polls)
 	}
 
-	got, err := s.ListForecasts(ctx, ForecastFilter{PollID: okID})
+	got, err := s.ListReadings(ctx, ReadingFilter{PollID: okID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
-		t.Fatalf("got %d forecasts, want 2", len(got))
+		t.Fatalf("got %d readings, want 2", len(got))
 	}
 	// Ordered by granularity then forecast_time: "daily" < "hourly".
 	d, h := got[0], got[1]
@@ -65,9 +65,26 @@ func TestRecordAndList(t *testing.T) {
 		h.Location != loc || h.LeadTimeHours != 6 || !h.PolledAt.Equal(start) {
 		t.Errorf("hourly row: %+v", h)
 	}
+	// Both data points have forecast_time in the future relative to start, so Kind defaults to forecast.
+	for _, r := range got {
+		if r.Kind != weather.KindForecast {
+			t.Errorf("expected KindForecast, got %q", r.Kind)
+		}
+	}
 
-	got, _ = s.ListForecasts(ctx, ForecastFilter{From: start.Add(12 * time.Hour)})
+	got, _ = s.ListReadings(ctx, ReadingFilter{From: start.Add(12 * time.Hour)})
 	if len(got) != 1 || got[0].Granularity != weather.GranularityDaily {
 		t.Errorf("time filter: %+v", got)
+	}
+
+	// Kind filter: only forecasts (both rows are forecasts, so count stays 2).
+	got, _ = s.ListReadings(ctx, ReadingFilter{Kind: "forecast"})
+	if len(got) != 2 {
+		t.Errorf("kind=forecast filter: got %d, want 2", len(got))
+	}
+	// Kind filter: no observations yet.
+	got, _ = s.ListReadings(ctx, ReadingFilter{Kind: "observation"})
+	if len(got) != 0 {
+		t.Errorf("kind=observation filter: got %d, want 0", len(got))
 	}
 }

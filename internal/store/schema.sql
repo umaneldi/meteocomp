@@ -12,14 +12,15 @@ CREATE TABLE IF NOT EXISTS polls (
     duration_ms    INTEGER NOT NULL,
     status         TEXT    NOT NULL CHECK (status IN ('ok', 'error')),
     error          TEXT,
-    forecast_count INTEGER NOT NULL DEFAULT 0
+    reading_count  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_polls_provider_started ON polls (provider, started_at);
 CREATE INDEX IF NOT EXISTS idx_polls_started ON polls (started_at);
 
--- One row per forecast data point. Rows are append-only: every poll stores a new
--- snapshot so the evolution of a forecast for a given target time can be compared.
-CREATE TABLE IF NOT EXISTS forecasts (
+-- One row per weather data point. Rows are append-only: every poll stores a new
+-- snapshot so the evolution of a forecast for a given target time can be compared,
+-- and observations can be set against earlier forecasts for the same time.
+CREATE TABLE IF NOT EXISTS readings (
     id                            INTEGER PRIMARY KEY AUTOINCREMENT,
     poll_id                       INTEGER NOT NULL REFERENCES polls (id) ON DELETE CASCADE,
     polled_at                     TEXT    NOT NULL,
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS forecasts (
 
     forecast_time                 TEXT    NOT NULL,  -- UTC start of the covered period
     granularity                   TEXT    NOT NULL,  -- hourly | 3h | daily
-    lead_time_hours               REAL    NOT NULL,  -- forecast_time - polled_at
+    lead_time_hours               REAL    NOT NULL,  -- forecast_time - polled_at (negative for observations)
+    kind                          TEXT    NOT NULL CHECK (kind IN ('forecast', 'observation')) DEFAULT 'forecast',
 
     temperature_c                 REAL,
     temperature_min_c             REAL,
@@ -59,9 +61,10 @@ CREATE TABLE IF NOT EXISTS forecasts (
 
     created_at                    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS idx_forecasts_provider_loc_time ON forecasts (provider, location_name, forecast_time);
-CREATE INDEX IF NOT EXISTS idx_forecasts_time ON forecasts (forecast_time);
-CREATE INDEX IF NOT EXISTS idx_forecasts_poll ON forecasts (poll_id);
+CREATE INDEX IF NOT EXISTS idx_readings_provider_loc_time ON readings (provider, location_name, forecast_time);
+CREATE INDEX IF NOT EXISTS idx_readings_time ON readings (forecast_time);
+CREATE INDEX IF NOT EXISTS idx_readings_poll ON readings (poll_id);
+CREATE INDEX IF NOT EXISTS idx_readings_kind ON readings (kind);
 
 -- Runtime settings edited from the web UI. Only the latest state is kept.
 -- Known keys: poll_interval (Go duration string, shared by all providers).

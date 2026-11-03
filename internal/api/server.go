@@ -50,7 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/locations", s.listLocations)
 	mux.HandleFunc("GET /api/v1/polls", s.listPolls)
 	mux.HandleFunc("POST /api/v1/polls", s.triggerPoll)
-	mux.HandleFunc("GET /api/v1/forecasts", s.listForecasts)
+	mux.HandleFunc("GET /api/v1/readings", s.listReadings)
 	return mux
 }
 
@@ -125,12 +125,13 @@ func (s *Server) triggerPoll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "started", "providers": names})
 }
 
-func (s *Server) listForecasts(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := store.ForecastFilter{
+	f := store.ReadingFilter{
 		Provider:    q.Get("provider"),
 		Location:    q.Get("location"),
 		Granularity: q.Get("granularity"),
+		Kind:        q.Get("kind"),
 	}
 	var err error
 	if f.Limit, err = parseLimit(q.Get("limit")); err != nil {
@@ -153,7 +154,7 @@ func (s *Server) listForecasts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := s.store.ListForecasts(r.Context(), f)
+	out, err := s.store.ListReadings(r.Context(), f)
 	if err != nil {
 		s.internalError(w, err)
 		return

@@ -33,6 +33,14 @@ const (
 	ConditionUnknown      Condition = "unknown"
 )
 
+// Kind distinguishes a forecast data point from a recorded observation.
+type Kind string
+
+const (
+	KindForecast    Kind = "forecast"
+	KindObservation Kind = "observation"
+)
+
 // Granularity describes the time span a single forecast data point covers.
 type Granularity string
 
@@ -42,11 +50,13 @@ const (
 	GranularityDaily      Granularity = "daily"
 )
 
-// Forecast is a single forecast data point returned by a provider.
-//
-// Units: °C, %, hPa, km/h, mm (precipitation), cm (snowfall), km (visibility),
-// degrees (wind direction). Nil pointers mean the provider did not supply the value.
+// Forecast is a single weather data point returned by a provider — either a
+// future forecast (Kind = KindForecast) or a past/current observation (Kind =
+// KindObservation). Units: °C, %, hPa, km/h, mm (precipitation), cm (snowfall),
+// km (visibility), degrees (wind direction). Nil pointers mean the provider did
+// not supply the value.
 type Forecast struct {
+	Kind         Kind        `json:"kind"`          // "forecast" or "observation"
 	ForecastTime time.Time   `json:"forecast_time"` // UTC start of the covered period
 	Granularity  Granularity `json:"granularity"`
 
