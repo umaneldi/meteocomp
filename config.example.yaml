@@ -21,6 +21,8 @@ locations:
 #                   models (optional, e.g. "arome_france"), forecast_days (1-16, default 7)
 #   openweathermap  api_key needed;  5 day / 3 hour forecast
 #   weatherapi      api_key needed;  options: days (1-14, default 3)
+#   infoclimat      api_key (token) needed; hourly station observations;
+#                   options: station_id (required), past_days (1-30, default 7)
 providers:
   - name: open-meteo
     type: openmeteo
@@ -40,4 +42,14 @@ providers:
   - name: meteofrance
     type: openmeteo
     options: { endpoint: meteofrance, forecast_days: 4 }
+    enabled: false
+
+  # Infoclimat station observations (requires a token from https://www.infoclimat.fr/opendata/).
+  # One instance per station; configure multiple instances to cover several locations.
+  - name: infoclimat
+    type: infoclimat
+    # api_key: "..."   # Infoclimat token
+    options:
+      station_id: "000PU"   # Castanet-Tolosan
+      past_days: 7
     enabled: false

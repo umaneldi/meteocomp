@@ -89,6 +89,7 @@ docker run --rm -p 8080:8080 \
 | `openmeteo`      | no  | hourly + daily    | `endpoint` (default `forecast`), `models`, `forecast_days` (1-16, default 7) |
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
 | `weatherapi`     | yes | hourly + daily    | `days` (1-14, default 3)         |
+| `infoclimat`     | yes | hourly (obs)      | `station_id` (required), `past_days` (1-30, default 7) |
 
 `openmeteo` can target any Open-Meteo endpoint with the `endpoint` option (the path after
 `/v1/`): `forecast` (default) blends the best models for each location, while model-specific
@@ -96,6 +97,11 @@ endpoints such as `meteofrance` (Météo-France AROME 2.5 km over France + ARPEG
 `dwd-icon`, `gfs`, `ecmwf` or `metno` return a single weather service's forecast. `models`
 optionally narrows it further (e.g. `arome_france`). Points beyond the models' horizon are dropped.
 Configure several `openmeteo` instances to compare weather services side by side.
+
+`infoclimat` fetches hourly synoptic weather station observations from Infoclimat
+(https://www.infoclimat.fr/opendata/). All returned data points have `kind=observation`.
+Requires a token from the Infoclimat opendata portal. Each provider instance corresponds
+to one station; configure multiple instances to cover several locations.
 
 Any number of instances can be configured, including several of the same type.
 

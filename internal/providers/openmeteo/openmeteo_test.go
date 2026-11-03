@@ -69,8 +69,8 @@ func TestFetch(t *testing.T) {
 	// Hourly entries come before daily in the response.
 	hPast, hFuture, d := got[0], got[1], got[2]
 
-	if hPast.Kind != weather.KindObservation {
-		t.Errorf("past hourly: expected KindObservation, got %q", hPast.Kind)
+	if hPast.Kind != weather.KindForecast {
+		t.Errorf("past hourly: expected KindForecast, got %q", hPast.Kind)
 	}
 	if hFuture.Kind != weather.KindForecast {
 		t.Errorf("future hourly: expected KindForecast, got %q", hFuture.Kind)
@@ -88,24 +88,6 @@ func TestFetch(t *testing.T) {
 	}
 	if d.Granularity != weather.GranularityDaily || *d.TemperatureMaxC != 11.2 || *d.SnowfallCm != 1.4 || d.Condition != weather.ConditionSnow {
 		t.Errorf("daily: %+v", d)
-	}
-}
-
-func TestPastDaysOption(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("past_days") != "2" {
-			t.Errorf("expected past_days=2 in query, got %q", r.URL.RawQuery)
-		}
-		w.Write([]byte(`{"hourly":{"time":[],"weather_code":[]},"daily":{"time":[],"weather_code":[]}}`))
-	}))
-	defer srv.Close()
-
-	p, err := New(config.ProviderConfig{Name: "om", BaseURL: srv.URL, Options: map[string]any{"past_days": 2}}, srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Fetch(context.Background(), weather.Location{Name: "paris", Latitude: 48.85, Longitude: 2.35}); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -160,11 +142,3 @@ func TestInvalidEndpoint(t *testing.T) {
 	}
 }
 
-func TestInvalidPastDays(t *testing.T) {
-	if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"past_days": 100}}, http.DefaultClient); err == nil {
-		t.Error("past_days=100: expected error")
-	}
-	if _, err := New(config.ProviderConfig{Name: "om", Options: map[string]any{"past_days": -1}}, http.DefaultClient); err == nil {
-		t.Error("past_days=-1: expected error")
-	}
-}

@@ -647,6 +647,13 @@ function renderForecastTable(records, wrap) {
     if (!existing || r.polled_at > existing.polled_at) byProv.set(r.provider, r);
   }
 
+  const now = new Date();
+  const obsOnlyProviders = new Set();
+  for (const p of providerSet) {
+    if (records.filter((r) => r.provider === p).every((r) => r.kind === "observation"))
+      obsOnlyProviders.add(p);
+  }
+
   const times = [...byTime.keys()].sort();
   const settingsOrder = state.providers.map((p) => p.name);
   const provList = [
@@ -688,7 +695,11 @@ function renderForecastTable(records, wrap) {
       h("td", { class: "fc-time" }, timeLabel),
       ...provList.map((p) => {
         const r = byProv.get(p);
-        if (!r) return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
+        if (!r) {
+          if (obsOnlyProviders.has(p) && new Date(t) >= now)
+            return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "-"));
+          return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
+        }
 
         const temp = r.temperature_c ?? r.temperature_max_c ?? null;
         const tempEl = temp != null
