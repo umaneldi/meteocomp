@@ -17,6 +17,75 @@ const state = {
 };
 let uid = 0;
 
+const TABS = {
+  forecast: ["forecast"],
+  activity: ["activity"],
+  settings: ["polling", "locations", "providers"],
+};
+let currentTab = "forecast";
+
+function setTab(name) {
+  currentTab = name;
+  for (const [tab, ids] of Object.entries(TABS)) {
+    const active = tab === name;
+    $(`tab-${tab}`).setAttribute("aria-selected", String(active));
+    for (const id of ids) {
+      const el = $(id);
+      if (el) el.hidden = !active;
+    }
+  }
+}
+
+const PARAMS = [
+  { key: "temperature_c",    fallback: "temperature_max_c", label: "Temperature",    unit: "°C"   },
+  { key: "feels_like_c",                                    label: "Feels like",      unit: "°C"   },
+  { key: "temperature_min_c",                               label: "Temp min",        unit: "°C"   },
+  { key: "temperature_max_c",                               label: "Temp max",        unit: "°C"   },
+  { key: "precipitation_mm",                                label: "Precipitation",   unit: "mm"   },
+  { key: "humidity_pct",                                    label: "Humidity",        unit: "%"    },
+  { key: "wind_speed_kmh",                                  label: "Wind speed",      unit: "km/h" },
+  { key: "wind_gust_kmh",                                   label: "Wind gust",       unit: "km/h" },
+  { key: "pressure_hpa",                                    label: "Pressure",        unit: "hPa"  },
+  { key: "cloud_cover_pct",                                 label: "Cloud cover",     unit: "%"    },
+  { key: "uv_index",                                        label: "UV index",        unit: ""     },
+  { key: "visibility_km",                                   label: "Visibility",      unit: "km"   },
+];
+
+const CHART_COLORS = ["#e8590c","#1c7ed6","#2f9e44","#9c36b5","#f08c00","#0c8599","#e03131","#364fc7"];
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v));
+  return el;
+}
+
+function paramValue(r, param) {
+  return r[param.key] ?? (param.fallback ? r[param.fallback] : null);
+}
+
+function fmtParamValue(v, param) {
+  if (v == null) return "—";
+  if (param.unit === "°C") return `${v > 0 ? "+" : ""}${Math.round(v)}°`;
+  if (param.unit === "%")  return `${Math.round(v)}%`;
+  if (param.unit === "hPa") return String(Math.round(v));
+  if (param.unit === "mm")  return `${v.toFixed(1)} mm`;
+  if (param.unit === "km/h") return `${Math.round(v)} km/h`;
+  if (param.unit === "km")   return `${v.toFixed(1)} km`;
+  return v.toFixed(1);
+}
+
+function niceYTicks(min, max, count) {
+  const range = max - min || 1;
+  const raw = range / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const nice = [1, 2, 2.5, 5, 10].find(f => f * mag >= raw) * mag;
+  const start = Math.ceil(min / nice) * nice;
+  const ticks = [];
+  for (let t = start; t <= max + nice * 0.01; t = parseFloat((t + nice).toFixed(10))) ticks.push(t);
+  return ticks;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
@@ -534,6 +603,8 @@ const fc = {
   location: "",
   granularity: "hourly",
   windowStart: null, // Date; null means "now"
+  param: "temperature_c",
+  view: "table",
 };
 
 const CONDITION_LABEL = {
@@ -631,13 +702,12 @@ async function loadForecast() {
     return;
   }
 
-  renderForecastTable(records, wrap);
+  renderForecastView(records, wrap);
 }
 
-function renderForecastTable(records, wrap) {
+function buildFcData(records) {
   const byTime = new Map();
   const providerSet = new Set();
-
   for (const r of records) {
     const t = r.forecast_time;
     providerSet.add(r.provider);
@@ -646,25 +716,33 @@ function renderForecastTable(records, wrap) {
     const existing = byProv.get(r.provider);
     if (!existing || r.polled_at > existing.polled_at) byProv.set(r.provider, r);
   }
-
-  const now = new Date();
   const obsOnlyProviders = new Set();
   for (const p of providerSet) {
     if (records.filter((r) => r.provider === p).every((r) => r.kind === "observation"))
       obsOnlyProviders.add(p);
   }
-
-  const times = [...byTime.keys()].sort();
   const settingsOrder = state.providers.map((p) => p.name);
   const provList = [
     ...settingsOrder.filter((n) => providerSet.has(n)),
     ...[...providerSet].filter((n) => !settingsOrder.includes(n)).sort(),
   ];
+  return { byTime, provList, obsOnlyProviders };
+}
 
-  if (!times.length || !provList.length) {
+function renderForecastView(records, wrap) {
+  const { byTime, provList, obsOnlyProviders } = buildFcData(records);
+  if (![...byTime.keys()].length || !provList.length) {
     wrap.replaceChildren(h("p", { class: "empty" }, "No forecast data for this location and time window. Try polling first."));
     return;
   }
+  if (fc.view === "chart") renderForecastChart(wrap, provList, byTime);
+  else renderForecastTable(wrap, provList, byTime, obsOnlyProviders);
+}
+
+function renderForecastTable(wrap, provList, byTime, obsOnlyProviders) {
+  const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
+  const now = new Date();
+  const times = [...byTime.keys()].sort();
 
   const thead = h("thead", {},
     h("tr", {},
@@ -701,19 +779,17 @@ function renderForecastTable(records, wrap) {
           return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
         }
 
-        const temp = r.temperature_c ?? r.temperature_max_c ?? null;
-        const tempEl = temp != null
-          ? h("span", { class: `fc-temp ${tempClass(temp)}` }, `${temp > 0 ? "+" : ""}${Math.round(temp)}°`)
+        const val = paramValue(r, param);
+        const isTemp = param.unit === "°C";
+        const valEl = val != null
+          ? h("span", { class: `fc-temp ${isTemp ? tempClass(val) : "mild"}` }, fmtParamValue(val, param))
           : h("span", { class: "fc-temp mild" }, "—");
 
         const condText = CONDITION_LABEL[r.condition] || r.condition || "";
-        const precipMm = r.precipitation_mm;
-        const metaChildren = [];
-        if (condText) metaChildren.push(h("span", { class: "fc-cond" }, condText));
-        if (precipMm != null && precipMm > 0) metaChildren.push(h("span", { class: "fc-precip" }, `${precipMm.toFixed(1)} mm`));
+        const metaChildren = condText ? [h("span", { class: "fc-cond" }, condText)] : [];
 
         return h("td", { class: "fc-cell" },
-          tempEl,
+          valEl,
           metaChildren.length ? h("div", { class: "fc-meta" }, ...metaChildren) : null,
         );
       }),
@@ -721,6 +797,81 @@ function renderForecastTable(records, wrap) {
   }
 
   wrap.replaceChildren(h("table", { class: "fc-table" }, thead, h("tbody", {}, ...rows)));
+}
+
+function renderForecastChart(wrap, provList, byTime) {
+  const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
+  const allTimes = [...byTime.keys()].sort();
+  const n = allTimes.length;
+
+  const series = provList.map((prov, i) => {
+    const pts = allTimes.map((t, xi) => {
+      const r = byTime.get(t)?.get(prov);
+      return { xi, v: r ? paramValue(r, param) : null };
+    });
+    return { prov, pts, color: CHART_COLORS[i % CHART_COLORS.length] };
+  }).filter((s) => s.pts.some((p) => p.v != null));
+
+  if (!series.length) {
+    wrap.replaceChildren(h("p", { class: "empty" }, `No "${param.label}" data in this window.`));
+    return;
+  }
+
+  let yMin = Infinity, yMax = -Infinity;
+  for (const s of series) for (const p of s.pts) if (p.v != null) { yMin = Math.min(yMin, p.v); yMax = Math.max(yMax, p.v); }
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const yPad = (yMax - yMin) * 0.1;
+  yMin -= yPad; yMax += yPad;
+
+  const W = 800, H = 260, ML = 52, MR = 16, MT = 12, MB = 36;
+  const cW = W - ML - MR, cH = H - MT - MB;
+  const xS = (xi) => ML + (n > 1 ? xi / (n - 1) : 0.5) * cW;
+  const yS = (v)  => MT + (1 - (v - yMin) / (yMax - yMin)) * cH;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "fc-chart-svg",
+    role: "img", "aria-label": `${param.label} chart` });
+
+  for (const tick of niceYTicks(yMin, yMax, 5)) {
+    const y = yS(tick).toFixed(1);
+    const g = svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" });
+    svg.append(g);
+    const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
+    lbl.textContent = fmtParamValue(tick, param);
+    svg.append(lbl);
+  }
+
+  const maxXLabels = fc.granularity === "daily" ? n : 8;
+  const xStep = Math.max(1, Math.ceil(n / maxXLabels));
+  for (let xi = 0; xi < n; xi += xStep) {
+    const t = new Date(allTimes[xi]);
+    const xLbl = svgEl("text", { x: xS(xi).toFixed(1), y: H - MB + 14, class: "fc-chart-tick", "text-anchor": "middle" });
+    xLbl.textContent = fc.granularity === "daily"
+      ? t.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
+      : t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+    svg.append(xLbl);
+  }
+
+  svg.append(svgEl("line", { x1: ML, y1: (MT + cH).toFixed(1), x2: ML + cW, y2: (MT + cH).toFixed(1), class: "fc-chart-axis" }));
+
+  for (const s of series) {
+    let d = ""; let gap = true;
+    for (const p of s.pts) {
+      if (p.v == null) { gap = true; continue; }
+      const x = xS(p.xi).toFixed(1), y = yS(p.v).toFixed(1);
+      d += gap ? `M${x} ${y}` : ` L${x} ${y}`;
+      gap = false;
+    }
+    svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
+  }
+
+  const legend = h("div", { class: "fc-chart-legend" },
+    ...series.map((s) => h("span", { class: "fc-chart-legend-item" },
+      h("span", { class: "fc-chart-swatch", style: `background:${s.color}` }),
+      s.prov,
+    )),
+  );
+
+  wrap.replaceChildren(svg, legend);
 }
 
 function setupForecast() {
@@ -731,9 +882,21 @@ function setupForecast() {
   }
   renderFcWindowLabel(fcWindowStart(), fcWindowEnd(fcWindowStart()));
 
+  // Populate parameter dropdown
+  const paramSel = $("fc-param");
+  paramSel.replaceChildren(...PARAMS.map((p) =>
+    h("option", { value: p.key, selected: p.key === fc.param },
+      p.unit ? `${p.label} (${p.unit})` : p.label),
+  ));
+
   $("fc-location").addEventListener("change", (e) => {
     fc.location = e.target.value;
     fc.windowStart = null;
+    loadForecast();
+  });
+
+  paramSel.addEventListener("change", (e) => {
+    fc.param = e.target.value;
     loadForecast();
   });
 
@@ -749,6 +912,15 @@ function setupForecast() {
   $("fc-prev").addEventListener("click", () => shiftWindow(-1));
   $("fc-next").addEventListener("click", () => shiftWindow(1));
   $("fc-now").addEventListener("click", () => { fc.windowStart = null; loadForecast(); });
+
+  const setView = (v) => {
+    fc.view = v;
+    $("fc-view-table").setAttribute("aria-pressed", String(v === "table"));
+    $("fc-view-chart").setAttribute("aria-pressed", String(v === "chart"));
+    loadForecast();
+  };
+  $("fc-view-table").addEventListener("click", () => setView("table"));
+  $("fc-view-chart").addEventListener("click", () => setView("chart"));
 
   if (fc.location) loadForecast();
 }
@@ -767,8 +939,11 @@ async function boot() {
   $("loading").remove();
   const vEl = document.getElementById("app-version");
   if (vEl && state.version) vEl.textContent = " · " + state.version;
-  for (const s of document.querySelectorAll("main > section")) s.hidden = false;
   $("main").setAttribute("aria-busy", "false");
+  for (const name of Object.keys(TABS)) {
+    $(`tab-${name}`).addEventListener("click", () => setTab(name));
+  }
+  setTab(currentTab);
 
   renderAll();
   updateDirty();

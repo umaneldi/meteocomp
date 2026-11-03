@@ -72,9 +72,17 @@ a { color: inherit; }
 .brand-mark { width: 34px; height: 34px; fill: none; stroke: var(--signal); stroke-width: 3; flex: none; }
 .brand h1 { font: 600 1.6rem/1 var(--serif); letter-spacing: -.01em; margin: 0; }
 .tagline { margin: .2rem 0 0; color: var(--ink-3); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
-.jump { display: flex; gap: 1.1rem; font-size: .9rem; }
-.jump a { text-decoration: none; color: var(--ink-2); border-bottom: 1px solid transparent; }
-.jump a:hover { color: var(--ink); border-bottom-color: var(--signal); }
+/* ── Tab bar ──────────────────────────────────────────────── */
+.tabbar { background: var(--card); border-bottom: 1px solid var(--rule-strong); }
+.tabbar-inner { display: flex; gap: 0; }
+.tabbar button[role=tab] {
+  background: none; border: none; border-bottom: 3px solid transparent;
+  padding: .7rem 1.25rem; font: 500 .9rem/1 var(--sans);
+  color: var(--ink-2); cursor: pointer; white-space: nowrap;
+  margin-bottom: -1px;
+}
+.tabbar button[role=tab]:hover { color: var(--ink); }
+.tabbar button[role=tab][aria-selected=true] { color: var(--ink); border-bottom-color: var(--signal); }
 
 /* ── Panels ───────────────────────────────────────────────── */
 .loading { color: var(--ink-3); padding: 3rem 0; }
@@ -218,7 +226,6 @@ input::placeholder { color: var(--ink-3); }
 @media (max-width: 720px) {
   .card-top { grid-template-columns: 1fr 1fr; }
   .search { flex-direction: column; align-items: stretch; }
-  .jump { display: none; }
 }
 
 /* ── Save bar & toast ─────────────────────────────────────── */
@@ -244,6 +251,7 @@ input::placeholder { color: var(--ink-3); }
 /* ── Forecast comparison ──────────────────────────────── */
 .fc-controls { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1.25rem; }
 .fc-loc-field { min-width: 10rem; }
+.fc-param-field { min-width: 13rem; }
 .fc-gran { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; }
 .fc-gran button {
   font: 500 .88rem/1 var(--sans);
@@ -279,6 +287,15 @@ input::placeholder { color: var(--ink-3); }
 .fc-precip { font-size: .72rem; font-family: var(--mono); color: #4a9eff; white-space: nowrap; }
 .fc-empty-cell { color: var(--ink-3); font-size: .8rem; }
 .fc-loading { color: var(--ink-3); padding: 2rem 0; font-style: italic; }
+
+.fc-chart-svg { width: 100%; max-height: 320px; display: block; overflow: visible; }
+.fc-chart-grid { stroke: var(--rule); stroke-width: 1; }
+.fc-chart-axis { stroke: var(--rule-strong); stroke-width: 1; }
+.fc-chart-tick { font: .72rem var(--sans); fill: var(--ink-3); }
+.fc-chart-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.fc-chart-legend { display: flex; gap: .9rem; flex-wrap: wrap; margin-top: .85rem; }
+.fc-chart-legend-item { display: flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--ink-2); }
+.fc-chart-swatch { width: .75rem; height: .75rem; border-radius: 2px; flex: none; }
 @media (max-width: 720px) {
   .fc-controls { flex-direction: column; align-items: stretch; }
   .fc-nav { justify-content: flex-start; }

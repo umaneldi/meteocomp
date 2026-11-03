@@ -29,9 +29,9 @@ fetch succeeded or not.
 | `duration_ms` | INTEGER | Wall-clock fetch duration |
 | `status` | TEXT | `ok` or `error` |
 | `error` | TEXT | Error message if status = `error`, else NULL |
-| `forecast_count` | INTEGER | Number of forecast rows inserted for this poll |
+| `reading_count` | INTEGER | Number of reading rows inserted for this poll |
 
-### `forecasts` — one row per forecast data point
+### `readings` — one row per weather data point
 
 One poll returns many data points (e.g. 48 hourly + 7 daily values). Each becomes its own row,
 linked back to its poll via `poll_id`. Rows are **never updated**: every poll appends a fresh
@@ -46,6 +46,7 @@ Two times describe each row, plus the gap between them:
 | `polled_at` | When the forecast was retrieved — the poll's `started_at` | Our clock |
 | `forecast_time` | The UTC **start** of the period the figures cover | Provider |
 | `granularity` | Duration of that period: `hourly`, `3h`, or `daily` | Provider |
+| `kind` | `forecast` or `observation` | Provider |
 | `lead_time_hours` | `forecast_time − polled_at` in hours (decimal, can be negative) | Computed on insert |
 
 `lead_time_hours` is computed at insert time as:
@@ -58,15 +59,15 @@ lead := f.ForecastTime.Sub(r.StartedAt).Hours()
 
 Two polls for the same provider/location, six hours apart:
 
-| polled_at | forecast_time | granularity | lead_time_hours | temperature_c |
-|---|---|---|---|---|
-| 2026-11-02T10:00Z | 2026-11-03T12:00Z | hourly | 26.0 | 11.2 |
-| 2026-11-02T10:00Z | 2026-11-03T00:00Z | daily | 14.0 | NULL (see min/max) |
-| 2026-11-02T16:00Z | 2026-11-03T12:00Z | hourly | 20.0 | 10.4 |
+| polled_at | forecast_time | granularity | kind | lead_time_hours | temperature_c |
+|---|---|---|---|---|---|
+| 2026-11-02T10:00Z | 2026-11-03T12:00Z | hourly | forecast | 26.0 | 11.2 |
+| 2026-11-02T10:00Z | 2026-11-03T00:00Z | daily | forecast | 14.0 | NULL (see min/max) |
+| 2026-11-02T16:00Z | 2026-11-03T12:00Z | hourly | forecast | 20.0 | 10.4 |
 
 - **Forecast evolution for one target time**: fix `provider`, `location_name`,
   `forecast_time`, `granularity`; sort by `polled_at`. Lead time shrinks as the target
-  approaches. The index `idx_forecasts_provider_loc_time` is built for this.
+  approaches. The index `idx_readings_provider_loc_time` is built for this.
 - **Provider comparison**: fix `forecast_time` and `granularity`; group by `provider`.
 - **Accuracy by lead time**: bucket `lead_time_hours` (0–24 h, 24–48 h, …) and compare
   against the closest-lead-time row, which is the best proxy for "actual" the schema offers.
@@ -104,7 +105,7 @@ the value — not zero.
 
 #### Context columns (copied from poll / location at insert time)
 
-Location fields are denormalized into every forecast row so that old rows remain correct
+Location fields are denormalized into every reading row so that old rows remain correct
 even if a location is later renamed or moved.
 
 | Column | Description |
@@ -113,6 +114,7 @@ even if a location is later renamed or moved.
 | `polled_at` | Duplicate of `polls.started_at`, kept for query convenience |
 | `provider` / `provider_type` | Duplicates of `polls` columns |
 | `location_name`, `city`, `country`, `latitude`, `longitude` | Snapshot of location at poll time |
+| `created_at` | Wall-clock insert time (UTC), auto-filled by the database |
 
 ## Caveats
 
@@ -132,3 +134,7 @@ even if a location is later renamed or moved.
 4. **Granularity differs by provider.** OpenWeatherMap returns only `3h`; Open-Meteo and
    WeatherAPI return `hourly` and `daily`. Always filter on `granularity` when comparing
    providers.
+
+5. **Observations have negative lead times.** Infoclimat returns past observations, so
+   `lead_time_hours` will be negative. Filter on `kind` to separate forecasts from
+   observations when comparing providers.

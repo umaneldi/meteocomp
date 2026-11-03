@@ -15,6 +15,11 @@ Open http://localhost:8080/ and configure everything from the web UI:
 - **Locations** — search a place (Open-Meteo geocoding, from the browser) or enter coordinates.
 - **Providers** — enable/disable instances, add several of the same type, set options and
   provision API keys. Keys are write-only: the API only reports whether a key is set.
+- **Forecast comparison** — the *Forecast* section shows a timeline table with one column per
+  provider. When a time slot has been polled more than once (e.g. the same target hour was
+  forecast this morning and again this afternoon), the table shows the **most recently polled**
+  reading for that slot. All historical readings remain in the database and are queryable via
+  the API.
 
 Settings are persisted in the database. On first start the database is seeded with defaults
 (Open-Meteo enabled, keyed providers disabled, no locations). Saving restarts the poller; each
@@ -91,7 +96,7 @@ docker run --rm -p 8080:8080 \
 | `openmeteo`      | no  | hourly + daily    | `endpoint` (default `forecast`), `models`, `forecast_days` (1-16, default 7) |
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
 | `weatherapi`     | yes | hourly + daily    | `days` (1-14, default 3)         |
-| `infoclimat`     | yes | hourly (obs)      | `station_id` (required), `past_days` (1-30, default 7) |
+| `infoclimat`     | yes | hourly (obs)      | `past_days` (1-30, default 7)    |
 
 `openmeteo` can target any Open-Meteo endpoint with the `endpoint` option (the path after
 `/v1/`): `forecast` (default) blends the best models for each location, while model-specific
@@ -102,8 +107,9 @@ Configure several `openmeteo` instances to compare weather services side by side
 
 `infoclimat` fetches hourly synoptic weather station observations from Infoclimat
 (https://www.infoclimat.fr/opendata/). All returned data points have `kind=observation`.
-Requires a token from the Infoclimat opendata portal. Each provider instance corresponds
-to one station; configure multiple instances to cover several locations.
+Requires a token from the Infoclimat opendata portal. The station queried per location is
+taken from each location's `station_id` field; one provider instance handles all configured
+locations in a single API call.
 
 Any number of instances can be configured, including several of the same type.
 
@@ -123,12 +129,13 @@ between backends.
 Settings tables (`settings`, `locations`, `providers`) hold the current
 configuration; they are replaced as a whole on each save. Data tables:
 
-- `polls` — one row per provider/location fetch: timestamps, duration, status (`ok`/`error`), error, forecast count.
-- `forecasts` — one row per forecast point: poll date, forecast date, granularity, lead time, provider,
-  location (name, city, country, lat/lon), temperature (current/min/max/feels-like), humidity, dew point,
-  pressure, wind speed/gust/direction, cloud cover, precipitation amount/probability, snowfall, UV index,
-  visibility, normalized condition (`clear`, `partly_cloudy`, `cloudy`, `fog`, `drizzle`, `rain`,
-  `freezing_rain`, `sleet`, `snow`, `thunderstorm`, `unknown`) plus the raw provider code and text.
+- `polls` — one row per provider/location fetch: timestamps, duration, status (`ok`/`error`), error, reading count.
+- `readings` — one row per weather data point (forecast or observation): poll date, data time, granularity,
+  kind (`forecast` or `observation`), lead time, provider, location (name, city, country, lat/lon),
+  temperature (current/min/max/feels-like), humidity, dew point, pressure, wind speed/gust/direction,
+  cloud cover, precipitation amount/probability, snowfall, UV index, visibility, normalized condition
+  (`clear`, `partly_cloudy`, `cloudy`, `fog`, `drizzle`, `rain`, `freezing_rain`, `sleet`, `snow`,
+  `thunderstorm`, `unknown`) plus the raw provider code and text.
 
 See `internal/store/schema_sqlite.sql` and `internal/store/schema_postgres.sql` for the exact schema.
 
@@ -141,6 +148,7 @@ a throwaway schema in that database.
 |--------|----------------------|------------------|
 | GET    | `/`                  | settings web UI |
 | GET    | `/healthz`           | |
+| GET    | `/api/v1/version`    | service version |
 | GET    | `/api/v1/settings`   | current settings; API keys reported as `has_api_key` / `api_key_hint` only |
 | PUT    | `/api/v1/settings`   | replace settings (see below) |
 | GET    | `/api/v1/provider-types` | available provider types, options and whether they need a key |
@@ -148,7 +156,8 @@ a throwaway schema in that database.
 | GET    | `/api/v1/locations`  | |
 | GET    | `/api/v1/polls`      | `provider`, `location`, `status`, `limit` |
 | POST   | `/api/v1/polls`      | `provider` (optional) — trigger an immediate poll |
-| GET    | `/api/v1/forecasts`  | `provider`, `location`, `granularity`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit` |
+| GET    | `/api/v1/readings`   | `provider`, `location`, `granularity`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit` |
+| GET    | `/api/v1/stations`   | `q` (min 2 chars) — search Infoclimat stations by ID or name |
 
 `limit` defaults to 500 (max 10000).
 
