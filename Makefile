@@ -1,5 +1,7 @@
+VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
+
 build:
-	go build -o bin/meteocomp ./cmd/meteocomp
+	go build -ldflags="-X github.com/yanndethe/meteocomp/internal/version.Version=$(VERSION)" -o bin/meteocomp ./cmd/meteocomp
 
 test:
 	go vet ./...

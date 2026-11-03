@@ -6,10 +6,13 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 ARG TARGETOS TARGETARCH
+ARG VERSION=dev
 # modernc.org/sqlite is pure Go, so a fully static binary is possible.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/meteocomp ./cmd/meteocomp
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/yanndethe/meteocomp/internal/version.Version=${VERSION}" \
+      -o /out/meteocomp ./cmd/meteocomp
 RUN mkdir -p /out/data
 
 # distroless/static ships CA certificates, tzdata and a non-root user.

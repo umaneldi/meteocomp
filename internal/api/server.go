@@ -14,6 +14,7 @@ import (
 	"github.com/yanndethe/meteocomp/internal/config"
 	"github.com/yanndethe/meteocomp/internal/poller"
 	"github.com/yanndethe/meteocomp/internal/store"
+	"github.com/yanndethe/meteocomp/internal/version"
 	"github.com/yanndethe/meteocomp/internal/weather"
 	"github.com/yanndethe/meteocomp/internal/web"
 )
@@ -43,6 +44,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /", web.Handler())
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /api/v1/version", s.getVersion)
 	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
 	mux.HandleFunc("GET /api/v1/provider-types", s.listProviderTypes)
@@ -56,6 +58,10 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) getVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": version.Version})
 }
 
 type providerView struct {

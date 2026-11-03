@@ -745,14 +745,17 @@ function setupForecast() {
 // ── Boot ──────────────────────────────────────────────────────────────────
 async function boot() {
   try {
-    const [types, doc] = await Promise.all([api("GET", "/api/v1/provider-types"), api("GET", "/api/v1/settings")]);
+    const [types, doc, ver] = await Promise.all([api("GET", "/api/v1/provider-types"), api("GET", "/api/v1/settings"), api("GET", "/api/v1/version")]);
     state.types = types;
     loadDoc(doc);
+    state.version = ver?.version ?? "dev";
   } catch (e) {
     $("loading").textContent = `Could not load settings: ${e.message}`;
     return;
   }
   $("loading").remove();
+  const vEl = document.getElementById("app-version");
+  if (vEl && state.version) vEl.textContent = " · " + state.version;
   for (const s of document.querySelectorAll("main > section")) s.hidden = false;
   $("main").setAttribute("aria-busy", "false");
 
