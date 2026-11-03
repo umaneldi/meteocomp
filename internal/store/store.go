@@ -54,6 +54,7 @@ type Poll struct {
 	Status       string    `json:"status"`
 	Error        string    `json:"error,omitempty"`
 	ReadingCount int       `json:"reading_count"`
+	Kinds        []string  `json:"kinds"`
 }
 
 // ReadingRecord is a stored readings row (forecast or observation).

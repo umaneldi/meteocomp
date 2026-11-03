@@ -474,7 +474,8 @@ async function refreshPolls() {
       h("td", {},
         h("span", { class: `status ${p.status}` }, p.status),
         p.error ? h("span", { class: "poll-error", title: p.error }, p.error) : null),
-      h("td", { class: "num" }, p.forecast_count),
+      h("td", {}, (p.kinds && p.kinds.length) ? p.kinds.join("+") : "—"),
+      h("td", { class: "num" }, p.reading_count),
       h("td", { class: "num" }, `${(p.duration_ms / 1000).toFixed(1)} s`))));
     $("polls-empty").hidden = polls.length > 0;
   } catch (e) {
@@ -624,7 +625,7 @@ async function loadForecast() {
       to: end.toISOString(),
       limit: "2000",
     });
-    records = await api("GET", `/api/v1/forecasts?${params}`);
+    records = await api("GET", `/api/v1/readings?${params}`);
   } catch (e) {
     wrap.replaceChildren(h("p", { class: "empty" }, `Could not load forecasts: ${e.message}`));
     return;

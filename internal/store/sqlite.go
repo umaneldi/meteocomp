@@ -169,7 +169,9 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 		w.add("status = ?", f.Status)
 	}
 	q := `SELECT id, provider, provider_type, location_name, started_at, finished_at, duration_ms,
-		status, COALESCE(error, ''), reading_count FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
+		status, COALESCE(error, ''), reading_count,
+		(SELECT GROUP_CONCAT(DISTINCT kind) FROM readings WHERE poll_id = polls.id) AS kinds
+		FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
@@ -183,9 +185,13 @@ func (s *SQLite) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 	for rows.Next() {
 		var p Poll
 		var started, finished string
+		var kinds sql.NullString
 		if err := rows.Scan(&p.ID, &p.Provider, &p.ProviderType, &p.LocationName, &started, &finished,
-			&p.DurationMs, &p.Status, &p.Error, &p.ReadingCount); err != nil {
+			&p.DurationMs, &p.Status, &p.Error, &p.ReadingCount, &kinds); err != nil {
 			return nil, err
+		}
+		if kinds.Valid && kinds.String != "" {
+			p.Kinds = strings.Split(kinds.String, ",")
 		}
 		if p.StartedAt, err = parseTime(started); err != nil {
 			return nil, err
