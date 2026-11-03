@@ -40,8 +40,7 @@ shows the key as coming from the environment. When unset, enter the key in the w
 | Flag | Env | Default |
 | --- | --- | --- |
 | `-addr` | `METEOCOMP_HTTP_ADDR` | `:8080` |
-| `-database-uri` | `DATABASE_URI` | none (SQLite at `-db`) |
-| `-db` | `METEOCOMP_DB_PATH` | `meteocomp.db` |
+| `-database-uri` | `DATABASE_URI` | `sqlite://meteocomp.db` |
 | `-config` | `METEOCOMP_CONFIG` | none |
 
 ### Optional seed file (automated tests)
@@ -117,7 +116,7 @@ SQLite or PostgreSQL, selected by `DATABASE_URI` (or `-database-uri`):
 | `postgres://user:pass@host:5432/dbname?sslmode=disable` (or `postgresql://`) | PostgreSQL |
 | `sqlite:///absolute/path.db`, `sqlite://relative/path.db`, `sqlite:path.db`, or a bare path | SQLite |
 
-When `DATABASE_URI` is unset, the SQLite file at `-db` / `METEOCOMP_DB_PATH` is used. Tables are
+When `DATABASE_URI` is unset, `sqlite://meteocomp.db` is used. Tables are
 created on startup; the PostgreSQL database itself must already exist. Data is not migrated
 between backends.
 

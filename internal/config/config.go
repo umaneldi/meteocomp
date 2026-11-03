@@ -27,19 +27,12 @@ const MinPollInterval = time.Minute
 
 // Config is the root of the optional YAML file.
 type Config struct {
-	HTTP     HTTPConfig     `yaml:"http"`
-	Database DatabaseConfig `yaml:"database"`
+	HTTP     HTTPConfig `yaml:"http"`
 	Settings `yaml:",inline"`
 }
 
 type HTTPConfig struct {
 	Addr string `yaml:"addr"`
-}
-
-type DatabaseConfig struct {
-	// URI is a postgres:// or sqlite:// URI; it takes precedence over Path.
-	URI  string `yaml:"uri"`
-	Path string `yaml:"path"` // SQLite file path
 }
 
 // Settings are the runtime settings persisted in the database.

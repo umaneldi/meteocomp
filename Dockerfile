@@ -29,7 +29,7 @@ COPY --from=build --chown=nonroot:nonroot /out/data /data
 # of the OpenWeatherMap / WeatherAPI.com providers and override any key typed in
 # the web UI. When empty, keys are entered in the web UI.
 ENV METEOCOMP_HTTP_ADDR=:8080 \
-    METEOCOMP_DB_PATH=/data/meteocomp.db \
+    DATABASE_URI=sqlite:///data/meteocomp.db \
     OWM_API_KEY="" \
     WEATHER_API_KEY=""
 

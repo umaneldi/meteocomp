@@ -17,7 +17,7 @@ database and edited from an embedded web UI.
 
 ## Layout
 
-- `cmd/meteocomp` — entry point: opens the store (`DATABASE_URI`, else SQLite at `METEOCOMP_DB_PATH`), loads settings (DB, else optional seed file, else
+- `cmd/meteocomp` — entry point: opens the store (`DATABASE_URI`, default `sqlite://meteocomp.db`), loads settings (DB, else optional seed file, else
   defaults), starts the poller manager and HTTP server.
 - `internal/weather` — domain types: `Location`, `Forecast`, normalized `Condition`, `Provider` interface.
 - `internal/config` — `Settings` types, defaults and validation; optional YAML seed file loading
