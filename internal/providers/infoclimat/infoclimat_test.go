@@ -12,35 +12,43 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-func pastTimestamp() string {
-	return time.Now().UTC().Add(-2 * time.Hour).Format("2006-01-02 15:04:05")
+// pastHourTimestamp returns a timestamp 2 hours in the past, truncated to the hour.
+func pastHourTimestamp() string {
+	return time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour).Format("2006-01-02 15:04:05")
 }
 
 func fixture(stationID, ts string) string {
 	return `{
-  "request": {},
-  "data": {
-    "` + stationID + `": {
-      "` + ts + `": {
-        "tc": 12.3,
-        "u": 85.0,
-        "pmer": 1015.2,
-        "ff": 3.2,
-        "dd": 180.0,
-        "rr1": 0.5,
-        "td": 9.8,
-        "vv": 30000.0,
-        "ww": 61,
-        "rafales": 8.0
+  "status": "OK",
+  "errors": [],
+  "data": [],
+  "hourly": {
+    "` + stationID + `": [
+      {
+        "id_station": "` + stationID + `",
+        "dh_utc": "` + ts + `",
+        "temperature": 12.3,
+        "temperature_min": null,
+        "temperature_max": null,
+        "humidite": 85.0,
+        "point_de_rosee": 9.8,
+        "pression": 1015.2,
+        "vent_moyen": 11.5,
+        "vent_rafales": 28.8,
+        "vent_direction": 180.0,
+        "pluie_1h": 0.5,
+        "visibilite": 30000.0,
+        "temps_omm": 61,
+        "uv_index": null
       }
-    }
+    ]
   }
 }`
 }
 
 func TestFetch(t *testing.T) {
 	const stationID = "07156"
-	ts := pastTimestamp()
+	ts := pastHourTimestamp()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("token"); got != "tok" {
@@ -86,11 +94,11 @@ func TestFetch(t *testing.T) {
 	if obs.HumidityPct == nil || *obs.HumidityPct != 85.0 {
 		t.Errorf("humidity: %v", obs.HumidityPct)
 	}
-	// Wind speed: 3.2 m/s × 3.6 = 11.52 km/h
-	if obs.WindSpeedKmh == nil || math.Abs(*obs.WindSpeedKmh-11.52) > 0.001 {
+	// Wind speed: 11.5 km/h (already in km/h, no conversion)
+	if obs.WindSpeedKmh == nil || *obs.WindSpeedKmh != 11.5 {
 		t.Errorf("wind speed: %v", obs.WindSpeedKmh)
 	}
-	// Wind gusts: 8.0 m/s × 3.6 = 28.8 km/h
+	// Wind gusts: 28.8 km/h (already in km/h)
 	if obs.WindGustKmh == nil || math.Abs(*obs.WindGustKmh-28.8) > 0.001 {
 		t.Errorf("wind gust: %v", obs.WindGustKmh)
 	}
@@ -108,7 +116,7 @@ func TestFetch(t *testing.T) {
 
 func TestFutureTimestampFiltered(t *testing.T) {
 	const stationID = "07156"
-	futureTS := time.Now().UTC().Add(1 * time.Hour).Format("2006-01-02 15:04:05")
+	futureTS := time.Now().UTC().Add(1 * time.Hour).Truncate(time.Hour).Format("2006-01-02 15:04:05")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"time"
 
@@ -82,24 +81,28 @@ func (p *Provider) Name() string { return p.name }
 func (p *Provider) Type() string { return Type }
 
 // apiResponse is the top-level Infoclimat opendata v2 response.
-// The data map is keyed by station ID, then by timestamp string.
+// Observations are in the "hourly" field, keyed by station ID.
 type apiResponse struct {
-	Data map[string]map[string]rawReading `json:"data"`
+	Hourly map[string][]rawReading `json:"hourly"`
 }
 
-// rawReading holds one hour's observed data. All fields are nullable.
-// ww is decoded as *float64 because the API may encode it as a JSON number with a decimal point.
+// rawReading holds one observation record. All measurement fields are nullable.
+// Wind speeds are already in km/h; visibility is in meters.
 type rawReading struct {
-	Tc      *float64 `json:"tc"`      // temperature °C
-	U       *float64 `json:"u"`       // relative humidity %
-	Pmer    *float64 `json:"pmer"`    // sea-level pressure hPa
-	Ff      *float64 `json:"ff"`      // wind speed m/s
-	Dd      *float64 `json:"dd"`      // wind direction degrees
-	Rr1     *float64 `json:"rr1"`     // precipitation last hour mm
-	Td      *float64 `json:"td"`      // dew point °C
-	Vv      *float64 `json:"vv"`      // visibility meters
-	Ww      *float64 `json:"ww"`      // WMO present weather code
-	Rafales *float64 `json:"rafales"` // wind gusts m/s
+	DhUTC          string   `json:"dh_utc"`
+	Temperature    *float64 `json:"temperature"`    // °C
+	TemperatureMin *float64 `json:"temperature_min"` // °C
+	TemperatureMax *float64 `json:"temperature_max"` // °C
+	Humidite       *float64 `json:"humidite"`        // %
+	PointDeRosee   *float64 `json:"point_de_rosee"`  // °C
+	Pression       *float64 `json:"pression"`        // hPa
+	VentMoyen      *float64 `json:"vent_moyen"`      // km/h
+	VentRafales    *float64 `json:"vent_rafales"`    // km/h
+	VentDirection  *float64 `json:"vent_direction"`  // degrees
+	Pluie1h        *float64 `json:"pluie_1h"`        // mm
+	Visibilite     *float64 `json:"visibilite"`      // meters
+	TempsOmm       *float64 `json:"temps_omm"`       // WMO present weather code
+	UVIndex        *float64 `json:"uv_index"`
 }
 
 func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.Forecast, error) {
@@ -124,51 +127,45 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 		return nil, err
 	}
 
-	stationData, ok := r.Data[p.stationID]
+	stationReadings, ok := r.Hourly[p.stationID]
 	if !ok {
 		return nil, fmt.Errorf("provider %q: station %q not found in response", p.name, p.stationID)
 	}
 
-	timestamps := make([]string, 0, len(stationData))
-	for ts := range stationData {
-		timestamps = append(timestamps, ts)
-	}
-	sort.Strings(timestamps)
-
-	out := make([]weather.Forecast, 0, len(timestamps))
-	for _, ts := range timestamps {
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.UTC)
+	out := make([]weather.Forecast, 0, len(stationReadings))
+	for _, rd := range stationReadings {
+		t, err := time.ParseInLocation("2006-01-02 15:04:05", rd.DhUTC, time.UTC)
 		if err != nil {
-			return nil, fmt.Errorf("provider %q: parse timestamp %q: %w", p.name, ts, err)
+			return nil, fmt.Errorf("provider %q: parse timestamp %q: %w", p.name, rd.DhUTC, err)
 		}
 		if !t.Before(now) {
 			continue
 		}
-		rd := stationData[ts]
+		// Keep only top-of-hour readings to align with hourly forecast granularity.
+		if t.Minute() != 0 {
+			continue
+		}
 		f := weather.Forecast{
 			Kind:             weather.KindObservation,
 			ForecastTime:     t,
 			Granularity:      weather.GranularityHourly,
-			TemperatureC:     rd.Tc,
-			HumidityPct:      rd.U,
-			PressureHPa:      rd.Pmer,
-			WindDirectionDeg: rd.Dd,
-			PrecipitationMm:  rd.Rr1,
-			DewPointC:        rd.Td,
+			TemperatureC:     rd.Temperature,
+			TemperatureMinC:  rd.TemperatureMin,
+			TemperatureMaxC:  rd.TemperatureMax,
+			HumidityPct:      rd.Humidite,
+			PressureHPa:      rd.Pression,
+			WindSpeedKmh:     rd.VentMoyen,
+			WindGustKmh:      rd.VentRafales,
+			WindDirectionDeg: rd.VentDirection,
+			PrecipitationMm:  rd.Pluie1h,
+			DewPointC:        rd.PointDeRosee,
+			UVIndex:          rd.UVIndex,
 		}
-		if rd.Ff != nil {
-			v := *rd.Ff * 3.6
-			f.WindSpeedKmh = &v
-		}
-		if rd.Rafales != nil {
-			v := *rd.Rafales * 3.6
-			f.WindGustKmh = &v
-		}
-		if rd.Vv != nil {
-			v := *rd.Vv / 1000.0
+		if rd.Visibilite != nil {
+			v := *rd.Visibilite / 1000.0
 			f.VisibilityKm = &v
 		}
-		setCondition(&f, rd.Ww)
+		setCondition(&f, rd.TempsOmm)
 		out = append(out, f)
 	}
 	return out, nil
