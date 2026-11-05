@@ -8,13 +8,14 @@ const vm = require("node:vm");
 const context = vm.createContext({ URLSearchParams });
 vm.runInContext(fs.readFileSync(path.join(__dirname, "static/forecast.js"), "utf8"), context);
 const evolution = vm.runInContext("ForecastEvolution", context);
-const target = new Date("2026-11-05T00:00:00Z");
+const midnight = new Date("2026-11-05T00:00:00Z"); // UTC day boundary — used for data generation
+const target = new Date("2026-11-05T12:00:00Z");   // noon — lead reference and display target
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 function reading(overrides = {}) {
   return {
     id: 1, poll_id: 1, provider: "first", polled_at: "2026-11-04T00:00:00Z",
-    forecast_time: target.toISOString(), granularity: "daily", kind: "forecast",
+    forecast_time: midnight.toISOString(), granularity: "daily", kind: "forecast",
     temperature_c: 10, ...overrides,
   };
 }
@@ -22,7 +23,7 @@ function reading(overrides = {}) {
 function hours(count = 24, overrides = {}) {
   return Array.from({ length: count }, (_, hour) => reading({
     id: hour + 1, granularity: "hourly",
-    forecast_time: new Date(target.getTime() + hour * 3600e3).toISOString(),
+    forecast_time: new Date(midnight.getTime() + hour * 3600e3).toISOString(),
     ...overrides,
   }));
 }
@@ -32,14 +33,14 @@ test("UTC target, cutoff, kind and date filtering preserve each eligible revisio
   const rows = [
     reading(),
     reading({ id: 2, poll_id: 2, polled_at: "2026-11-04T12:30:00Z" }),
-    reading({ id: 3, poll_id: 3, polled_at: target.toISOString() }),
+    reading({ id: 3, poll_id: 3, polled_at: midnight.toISOString() }),
     reading({ id: 4, poll_id: 4, polled_at: "2026-11-05T00:00:01Z" }),
     reading({ id: 5, poll_id: 5, kind: "observation" }),
     reading({ id: 6, poll_id: 6, forecast_time: "2026-11-06T00:00:00Z" }),
     reading({ id: 7, poll_id: 7, forecast_time: "2026-11-04T23:59:59Z" }),
   ];
   const data = evolution.build(rows, target);
-  assert.deepEqual(plain(data.leads), [24, 11.5, 0]);
+  assert.deepEqual(plain(data.leads), [36, 23.5, 12]);
   assert.deepEqual(plain(data.series[0].points.map((p) => p.pollID)), [1, 2, 3]);
 });
 
@@ -89,7 +90,7 @@ test("all reducers, extrema fallback, missing values and genuine zero", () => {
 test("3-hourly fallback, hourly precedence, duplicates and per-parameter coverage", () => {
   const threeHourly = Array.from({ length: 8 }, (_, i) => reading({
     id: i + 1, granularity: "3h",
-    forecast_time: new Date(target.getTime() + i * 3 * 3600e3).toISOString(),
+    forecast_time: new Date(midnight.getTime() + i * 3 * 3600e3).toISOString(),
     temperature_c: i, precipitation_mm: 1,
   }));
   let values = evolution.build(threeHourly, target).series[0].points[0].values;
@@ -113,7 +114,7 @@ test("3-hourly fallback, hourly precedence, duplicates and per-parameter coverag
 test("coverage unions overlaps and clips at UTC midnight", () => {
   const rows = [0, 1, 23].map((hour, i) => reading({
     id: i + 1, granularity: "3h",
-    forecast_time: new Date(target.getTime() + hour * 3600e3).toISOString(),
+    forecast_time: new Date(midnight.getTime() + hour * 3600e3).toISOString(),
   }));
   const value = evolution.build(rows, target).series[0].points[0].values.temperature_c;
   assert.equal(value.coverage, 5);
@@ -129,7 +130,7 @@ test("provider ordering and asynchronous or simultaneous polls retain all points
   ], target, ["configured", "removed", "configured"]);
   assert.deepEqual(plain(data.series.map((s) => s.provider)), ["configured", "a", "z"]);
   assert.equal(data.series[0].points.length, 3);
-  assert.deepEqual(plain(data.leads), [24, 1 / 3600]);
+  assert.deepEqual(plain(data.leads), [36, 12 + 1 / 3600]);
 });
 
 test("pagination loads all pages including an exact multiple and keeps filters", async () => {
@@ -143,7 +144,7 @@ test("pagination loads all pages including an exact multiple and keeps filters",
   assert.equal(queries.length, 3);
   assert.equal(queries[0].get("location"), "test location");
   assert.equal(queries[0].get("kind"), "forecast");
-  assert.equal(queries[0].get("from"), target.toISOString());
+  assert.equal(queries[0].get("from"), midnight.toISOString());
   assert.equal(queries[0].get("to"), "2026-11-06T00:00:00.000Z");
   assert.equal(queries[0].get("before_id"), null);
   assert.equal(queries[1].get("before_id"), "3");

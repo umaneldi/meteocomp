@@ -19,13 +19,18 @@ const ForecastEvolution = (() => {
   ];
 
   function today(now = new Date()) {
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
   }
 
+  // dayStart returns the UTC midnight that begins the calendar day containing target (noon).
+  function dayStart(target) { return target.getTime() - 12 * HOUR; }
+
   async function loadRecords(getPage, location, target, pageSize = 1000) {
+    const ds = dayStart(target);
     const query = new URLSearchParams({
-      location, kind: "forecast", from: target.toISOString(),
-      to: new Date(target.getTime() + DAY).toISOString(),
+      location, kind: "forecast",
+      from: new Date(ds).toISOString(),
+      to: new Date(ds + DAY).toISOString(),
       order: "id_desc", limit: String(pageSize),
     });
     const records = [];
@@ -46,9 +51,11 @@ const ForecastEvolution = (() => {
   }
 
   async function loadObservations(getPage, location, target, pageSize = 1000) {
+    const ds = dayStart(target);
     const query = new URLSearchParams({
-      location, kind: "observation", from: target.toISOString(),
-      to: new Date(target.getTime() + DAY).toISOString(),
+      location, kind: "observation",
+      from: new Date(ds).toISOString(),
+      to: new Date(ds + DAY).toISOString(),
       order: "id_desc", limit: String(pageSize),
     });
     const records = [];
@@ -69,11 +76,11 @@ const ForecastEvolution = (() => {
   }
 
   function buildObservation(records, target) {
-    const start = target.getTime();
+    const ds = dayStart(target);
     const byProvider = new Map();
     for (const r of records) {
       const time = new Date(r.forecast_time).getTime();
-      if (r.kind !== "observation" || time < start || time >= start + DAY) continue;
+      if (r.kind !== "observation" || time < ds || time >= ds + DAY) continue;
       if (!["hourly", "3h"].includes(r.granularity)) continue;
       if (!byProvider.has(r.provider)) byProvider.set(r.provider, new Map());
       const slots = byProvider.get(r.provider);
@@ -104,7 +111,7 @@ const ForecastEvolution = (() => {
     return covered / HOUR;
   }
 
-  function dailyValue(native, slots, param, target) {
+  function dailyValue(native, slots, param, ds) {
     if (Number.isFinite(native?.[param.key])) {
       return { value: native[param.key], source: "Native daily", partial: false };
     }
@@ -112,7 +119,7 @@ const ForecastEvolution = (() => {
       const value = r[param.key] ?? (param.fallback ? r[param.fallback] : null);
       if (!Number.isFinite(value)) return [];
       const start = new Date(r.forecast_time).getTime();
-      const end = Math.min(start + (r.granularity === "3h" ? 3 : 1) * HOUR, target + DAY);
+      const end = Math.min(start + (r.granularity === "3h" ? 3 : 1) * HOUR, ds + DAY);
       return [{ value, interval: [start, end], weight: (end - start) / HOUR }];
     });
     if (!available.length) return null;
@@ -134,13 +141,14 @@ const ForecastEvolution = (() => {
   }
 
   function build(records, target, providerOrder = [], maxLeadHours = Infinity) {
-    const start = target.getTime();
+    const noon = target.getTime();
+    const ds = dayStart(target); // midnight of the same UTC day
     const groups = new Map();
     for (const r of records) {
       const time = new Date(r.forecast_time).getTime();
       const polled = new Date(r.polled_at).getTime();
       if (!Number.isFinite(time) || !Number.isFinite(polled)) throw new Error("Invalid forecast timestamp");
-      if (r.kind !== "forecast" || time < start || time >= start + DAY || polled > start) continue;
+      if (r.kind !== "forecast" || time < ds || time >= ds + DAY || polled > ds) continue;
       if (!["daily", "hourly", "3h"].includes(r.granularity)) continue;
       const key = JSON.stringify([r.provider, r.poll_id]);
       if (!groups.has(key)) groups.set(key, new Map());
@@ -152,7 +160,7 @@ const ForecastEvolution = (() => {
     for (const group of groups.values()) {
       const records = [...group.values()];
       const representative = records[0];
-      const lead = (start - new Date(representative.polled_at).getTime()) / HOUR;
+      const lead = (noon - new Date(representative.polled_at).getTime()) / HOUR;
       if (lead > maxLeadHours) continue;
       const native = records.filter((r) => r.granularity === "daily").sort((a, b) => b.id - a.id)[0];
       const hourly = records.filter((r) => r.granularity === "hourly");
@@ -160,7 +168,7 @@ const ForecastEvolution = (() => {
       const point = {
         provider: representative.provider, pollID: representative.poll_id,
         polledAt: representative.polled_at, lead,
-        values: Object.fromEntries(params.map((param) => [param.key, dailyValue(native, slots, param, start)])),
+        values: Object.fromEntries(params.map((param) => [param.key, dailyValue(native, slots, param, ds)])),
       };
       if (!byProvider.has(point.provider)) byProvider.set(point.provider, []);
       byProvider.get(point.provider).push(point);

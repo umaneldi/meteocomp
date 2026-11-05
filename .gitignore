@@ -9,3 +9,4 @@ config.yaml
 .venv/
 check.py
 meteocomp.json
+*.bak
