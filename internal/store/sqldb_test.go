@@ -11,6 +11,47 @@ import (
 
 func TestRecordAndList(t *testing.T) { forEachBackend(t, testRecordAndList) }
 
+func TestReadingsPagination(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s *SQLDB) {
+		ctx := context.Background()
+		start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+		for range 3 {
+			_, err := s.RecordPoll(ctx, PollResult{
+				Provider: "test", Location: weather.Location{Name: "test"},
+				StartedAt: start, FinishedAt: start,
+				Forecasts: []weather.Forecast{
+					{ForecastTime: start, Granularity: weather.GranularityHourly},
+					{ForecastTime: start.Add(24 * time.Hour), Granularity: weather.GranularityDaily},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		filter := ReadingFilter{Order: "id_desc", Limit: 2, From: start.Add(24 * time.Hour), Kind: "forecast", Location: "test"}
+		first, err := s.ListReadings(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(first) != 2 || first[0].ID != 6 || first[1].ID != 4 {
+			t.Fatalf("first page: %+v", first)
+		}
+		filter.BeforeID = first[1].ID
+		second, err := s.ListReadings(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(second) != 1 || second[0].ID != 2 {
+			t.Fatalf("second page: %+v", second)
+		}
+		filter.BeforeID = second[0].ID
+		last, err := s.ListReadings(ctx, filter)
+		if err != nil || len(last) != 0 {
+			t.Fatalf("last page: %+v, %v", last, err)
+		}
+	})
+}
+
 func testRecordAndList(t *testing.T, s *SQLDB) {
 	ctx := context.Background()
 

@@ -140,8 +140,20 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 		Location:    q.Get("location"),
 		Granularity: q.Get("granularity"),
 		Kind:        q.Get("kind"),
+		Order:       q.Get("order"),
+	}
+	if f.Order != "" && f.Order != "id_desc" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("order must be id_desc when supplied"))
+		return
 	}
 	var err error
+	if q.Has("before_id") {
+		f.BeforeID, err = strconv.ParseInt(q.Get("before_id"), 10, 64)
+		if err != nil || f.BeforeID <= 0 || f.Order != "id_desc" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("before_id must be a positive integer with order=id_desc"))
+			return
+		}
+	}
 	if f.Limit, err = parseLimit(q.Get("limit")); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

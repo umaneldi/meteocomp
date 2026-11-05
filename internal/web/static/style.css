@@ -262,29 +262,27 @@ input::placeholder { color: var(--ink-3); }
 .fc-gran button:last-child { border-right: 0; }
 .fc-gran button:hover { color: var(--ink); background: var(--paper); }
 .fc-gran button[aria-pressed=true] { background: var(--ink); color: var(--paper); }
-.fc-nav { display: flex; align-items: center; gap: .5rem; }
-.fc-window-label { font-family: var(--mono); font-size: .82rem; color: var(--ink-2); white-space: nowrap; min-width: 14rem; text-align: center; }
+.fc-target-date { font-family: var(--mono); font-size: .82rem; color: var(--ink-2); margin: 0; align-self: center; }
 .fc-wrap { overflow-x: auto; margin-top: .5rem; }
 .fc-table { border-collapse: collapse; font-size: .85rem; }
-.fc-table th {
+.fc-table thead th {
   text-align: center; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase;
   color: var(--ink-3); font-weight: 600; padding: .4rem .75rem; border-bottom: 2px solid var(--rule-strong);
   white-space: nowrap; position: sticky; top: 0; background: var(--paper); z-index: 1;
 }
 .fc-table th.fc-time-col { text-align: left; min-width: 9rem; }
-.fc-table td { padding: .3rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: middle; }
-.fc-table td.fc-time { font-family: var(--mono); font-size: .8rem; color: var(--ink-2); white-space: nowrap; }
+.fc-table td, .fc-table tbody th { padding: .3rem .75rem; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.fc-table .fc-time { font-family: var(--mono); font-size: .8rem; font-weight: 400; color: var(--ink-2); white-space: nowrap; text-align: left; }
 .fc-table td.fc-cell { text-align: center; min-width: 7rem; }
-.fc-table tr.fc-day-head td { background: var(--rule); font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); padding: .2rem .75rem; }
+.fc-reading { padding: .3rem 0; }
+.fc-coverage { display: block; font-size: .72rem; color: var(--ink-3); margin-top: .25rem; max-width: 18rem; }
+.fc-coverage.partial { color: var(--signal); font-weight: 600; }
 .fc-temp { font: 600 1rem/1.2 var(--mono); display: block; }
 .fc-temp.cold { color: #4a9eff; }
 .fc-temp.cool { color: #2da868; }
 .fc-temp.mild { color: var(--ink); }
 .fc-temp.warm { color: #d9480f; }
 .fc-temp.hot { color: #b42318; }
-.fc-meta { display: flex; gap: .4rem; justify-content: center; align-items: center; margin-top: .2rem; flex-wrap: wrap; }
-.fc-cond { font-size: .72rem; color: var(--ink-3); white-space: nowrap; }
-.fc-precip { font-size: .72rem; font-family: var(--mono); color: #4a9eff; white-space: nowrap; }
 .fc-empty-cell { color: var(--ink-3); font-size: .8rem; }
 .fc-loading { color: var(--ink-3); padding: 2rem 0; font-style: italic; }
 
@@ -293,10 +291,13 @@ input::placeholder { color: var(--ink-3); }
 .fc-chart-axis { stroke: var(--rule-strong); stroke-width: 1; }
 .fc-chart-tick { font: .72rem var(--sans); fill: var(--ink-3); }
 .fc-chart-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.fc-chart-point.partial { stroke: var(--ink); stroke-width: 2; }
+.fc-chart-point:focus { outline: 2px solid var(--signal); outline-offset: 3px; }
+.fc-chart-svg ~ .fc-coverage { max-width: none; }
 .fc-chart-legend { display: flex; gap: .9rem; flex-wrap: wrap; margin-top: .85rem; }
 .fc-chart-legend-item { display: flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--ink-2); }
 .fc-chart-swatch { width: .75rem; height: .75rem; border-radius: 2px; flex: none; }
 @media (max-width: 720px) {
   .fc-controls { flex-direction: column; align-items: stretch; }
-  .fc-nav { justify-content: flex-start; }
+  .fc-target-date { align-self: flex-start; }
 }

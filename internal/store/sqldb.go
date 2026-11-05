@@ -152,6 +152,12 @@ func (s *SQLDB) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
 }
 
 func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error) {
+	if f.Order != "" && f.Order != "id_desc" {
+		return nil, fmt.Errorf("unsupported readings order %q", f.Order)
+	}
+	if f.BeforeID < 0 || (f.BeforeID != 0 && f.Order != "id_desc") {
+		return nil, fmt.Errorf("before_id requires a positive cursor and order=id_desc")
+	}
 	var w where
 	if f.Provider != "" {
 		w.add("provider = ?", f.Provider)
@@ -180,8 +186,15 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	if f.PollID != 0 {
 		w.add("poll_id = ?", f.PollID)
 	}
+	if f.BeforeID != 0 {
+		w.add("id < ?", f.BeforeID)
+	}
+	order := "polled_at DESC, provider, location_name, granularity, forecast_time"
+	if f.Order == "id_desc" {
+		order = "id DESC"
+	}
 	q := "SELECT id, " + readingColumns + " FROM readings" + w.String() +
-		" ORDER BY polled_at DESC, provider, location_name, granularity, forecast_time"
+		" ORDER BY " + order
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}

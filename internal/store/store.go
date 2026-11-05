@@ -59,13 +59,13 @@ type Poll struct {
 
 // ReadingRecord is a stored readings row (forecast or observation).
 type ReadingRecord struct {
-	ID           int64            `json:"id"`
-	PollID       int64            `json:"poll_id"`
-	PolledAt     time.Time        `json:"polled_at"`
-	Provider     string           `json:"provider"`
-	ProviderType string           `json:"provider_type"`
-	Location     weather.Location `json:"location"`
-	LeadTimeHours float64         `json:"lead_time_hours"`
+	ID            int64            `json:"id"`
+	PollID        int64            `json:"poll_id"`
+	PolledAt      time.Time        `json:"polled_at"`
+	Provider      string           `json:"provider"`
+	ProviderType  string           `json:"provider_type"`
+	Location      weather.Location `json:"location"`
+	LeadTimeHours float64          `json:"lead_time_hours"`
 	weather.Forecast
 }
 
@@ -88,4 +88,6 @@ type ReadingFilter struct {
 	PolledTo    time.Time
 	PollID      int64
 	Limit       int
+	Order       string // "id_desc" enables stable cursor pagination; empty keeps chronological ordering
+	BeforeID    int64  // exclusive cursor, used with Order = "id_desc"
 }

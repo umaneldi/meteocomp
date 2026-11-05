@@ -7,7 +7,11 @@ test:
 	go vet ./...
 	go test ./...
 
+test-web:
+	node --check internal/web/static/app.js
+	node --test internal/web/forecast_test.cjs
+
 run:
 	go run ./cmd/meteocomp
 
-.PHONY: build test run
+.PHONY: build test test-web run

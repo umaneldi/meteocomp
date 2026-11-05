@@ -34,22 +34,10 @@ function setTab(name) {
       if (el) el.hidden = !active;
     }
   }
+  if (name === "forecast" && fc.ready) loadForecast();
 }
 
-const PARAMS = [
-  { key: "temperature_c",    fallback: "temperature_max_c", label: "Temperature",    unit: "°C"   },
-  { key: "feels_like_c",                                    label: "Feels like",      unit: "°C"   },
-  { key: "temperature_min_c",                               label: "Temp min",        unit: "°C"   },
-  { key: "temperature_max_c",                               label: "Temp max",        unit: "°C"   },
-  { key: "precipitation_mm",                                label: "Precipitation",   unit: "mm"   },
-  { key: "humidity_pct",                                    label: "Humidity",        unit: "%"    },
-  { key: "wind_speed_kmh",                                  label: "Wind speed",      unit: "km/h" },
-  { key: "wind_gust_kmh",                                   label: "Wind gust",       unit: "km/h" },
-  { key: "pressure_hpa",                                    label: "Pressure",        unit: "hPa"  },
-  { key: "cloud_cover_pct",                                 label: "Cloud cover",     unit: "%"    },
-  { key: "uv_index",                                        label: "UV index",        unit: ""     },
-  { key: "visibility_km",                                   label: "Visibility",      unit: "km"   },
-];
+const PARAMS = ForecastEvolution.params;
 
 const CHART_COLORS = ["#e8590c","#1c7ed6","#2f9e44","#9c36b5","#f08c00","#0c8599","#e03131","#364fc7"];
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -58,10 +46,6 @@ function svgEl(tag, attrs = {}) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v));
   return el;
-}
-
-function paramValue(r, param) {
-  return r[param.key] ?? (param.fallback ? r[param.fallback] : null);
 }
 
 function fmtParamValue(v, param) {
@@ -102,11 +86,12 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
-async function api(method, path, body) {
+async function api(method, path, body, signal) {
   const res = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
@@ -596,21 +581,19 @@ function renderAll() {
   renderLocations();
   renderProviders();
   populateFcLocation();
+  if (fc.ready) loadForecast();
 }
 
 // ── Forecast comparison ───────────────────────────────────────────────────
 const fc = {
   location: "",
-  granularity: "hourly",
-  windowStart: null, // Date; null means "now"
   param: "temperature_c",
   view: "table",
-};
-
-const CONDITION_LABEL = {
-  clear: "clear", partly_cloudy: "partly cloudy", cloudy: "cloudy", fog: "fog",
-  drizzle: "drizzle", rain: "rain", freezing_rain: "freezing rain", sleet: "sleet",
-  snow: "snow", thunderstorm: "storm", unknown: "",
+  data: null,
+  target: null,
+  request: 0,
+  controller: null,
+  ready: false,
 };
 
 function tempClass(c) {
@@ -622,46 +605,17 @@ function tempClass(c) {
   return "hot";
 }
 
-function fcWindowStart() {
-  if (fc.windowStart) return fc.windowStart;
-  const now = new Date();
-  if (fc.granularity === "daily") {
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  }
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
-}
-
-function fcWindowEnd(start) {
-  const ms = fc.granularity === "daily" ? 7 * 86400e3 : 48 * 3600e3;
-  return new Date(start.getTime() + ms);
-}
-
-function shiftWindow(dir) {
-  const start = fcWindowStart();
-  const shift = fc.granularity === "daily" ? 7 * 86400e3 : 24 * 3600e3;
-  fc.windowStart = new Date(start.getTime() + dir * shift);
-  loadForecast();
-}
-
-function renderFcWindowLabel(start, end) {
-  const fmt = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-  if (fc.granularity === "daily") {
-    $("fc-window-label").textContent = `${fmt(start)} – ${fmt(new Date(end.getTime() - 86400e3))}`;
-  } else {
-    const fmtH = (d) => d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
-    $("fc-window-label").textContent = `${fmtH(start)} – ${fmtH(end)} UTC`;
-  }
-}
-
 function populateFcLocation() {
   const sel = $("fc-location");
   if (!sel) return;
   const locs = state.locations;
   if (!locs.length) {
     sel.replaceChildren(h("option", { value: "" }, "No locations configured"));
+    fc.location = "";
     return;
   }
-  const prev = fc.location || sel.value;
+  const prev = locs.some((l) => l.name === fc.location) ? fc.location : "";
+  fc.location = prev;
   sel.replaceChildren(
     h("option", { value: "" }, "Select location…"),
     ...locs.map((l) => h("option", { value: l.name, selected: l.name === prev }, l.name)),
@@ -673,163 +627,143 @@ function populateFcLocation() {
 }
 
 async function loadForecast() {
+  const request = ++fc.request;
+  fc.controller?.abort();
+  const controller = new AbortController();
+  fc.controller = controller;
+  fc.data = null;
+  const target = ForecastEvolution.today();
+  fc.target = target;
+  $("fc-target-date").textContent = `Today: ${target.toISOString().slice(0, 10)} (UTC)`;
+  const wrap = $("fc-wrap");
   if (!fc.location) {
-    const empty = $("fc-empty");
-    empty.textContent = "Select a location above to view forecast data.";
-    $("fc-wrap").replaceChildren(empty);
+    fc.controller = null;
+    wrap.replaceChildren(h("p", { class: "empty" }, "Select a location above to view forecast data."));
     return;
   }
 
-  const start = fcWindowStart();
-  const end = fcWindowEnd(start);
-  renderFcWindowLabel(start, end);
-
-  const wrap = $("fc-wrap");
   wrap.replaceChildren(h("p", { class: "fc-loading" }, "Loading…"));
 
-  let records;
   try {
-    const params = new URLSearchParams({
-      location: fc.location,
-      granularity: fc.granularity,
-      from: start.toISOString(),
-      to: end.toISOString(),
-      limit: "2000",
-    });
-    records = await api("GET", `/api/v1/readings?${params}`);
+    const records = await ForecastEvolution.loadRecords(
+      (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal),
+      fc.location, target,
+    );
+    if (request !== fc.request) return;
+    if (target.getTime() !== ForecastEvolution.today().getTime()) {
+      loadForecast();
+      return;
+    }
+    fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name));
+    renderForecastView();
   } catch (e) {
-    wrap.replaceChildren(h("p", { class: "empty" }, `Could not load forecasts: ${e.message}`));
+    if (request !== fc.request || e.name === "AbortError") return;
+    wrap.replaceChildren(h("p", { class: "empty", role: "alert" }, `Could not load forecasts: ${e.message}`));
+  } finally {
+    if (request === fc.request) fc.controller = null;
+  }
+}
+
+function fmtLead(lead) {
+  return String(Number(lead.toFixed(6)));
+}
+
+function coverageText(value) {
+  if (value.coverage == null) return value.source;
+  return `${value.partial ? "Partial coverage: " : ""}${value.coverage.toFixed(1)}/24 h; ` +
+    `${value.slots}/${value.totalSlots} available slots; ${value.source}`;
+}
+
+function pointDescription(point, value, param) {
+  return `${point.provider}; poll #${point.pollID} at ${point.polledAt}; ` +
+    `lead ${fmtLead(point.lead)} h; ${param.label}: ${fmtParamValue(value.value, param)}; ${coverageText(value)}`;
+}
+
+function renderForecastView() {
+  if (!fc.data) return;
+  if (fc.target.getTime() !== ForecastEvolution.today().getTime()) {
+    loadForecast();
     return;
   }
-
-  renderForecastView(records, wrap);
-}
-
-function buildFcData(records) {
-  const byTime = new Map();
-  const providerSet = new Set();
-  for (const r of records) {
-    const t = r.forecast_time;
-    providerSet.add(r.provider);
-    if (!byTime.has(t)) byTime.set(t, new Map());
-    const byProv = byTime.get(t);
-    const existing = byProv.get(r.provider);
-    if (!existing || r.polled_at > existing.polled_at) byProv.set(r.provider, r);
-  }
-  const obsOnlyProviders = new Set();
-  for (const p of providerSet) {
-    if (records.filter((r) => r.provider === p).every((r) => r.kind === "observation"))
-      obsOnlyProviders.add(p);
-  }
-  const settingsOrder = state.providers.map((p) => p.name);
-  const provList = [
-    ...settingsOrder.filter((n) => providerSet.has(n)),
-    ...[...providerSet].filter((n) => !settingsOrder.includes(n)).sort(),
-  ];
-  return { byTime, provList, obsOnlyProviders };
-}
-
-function renderForecastView(records, wrap) {
-  const { byTime, provList, obsOnlyProviders } = buildFcData(records);
-  if (![...byTime.keys()].length || !provList.length) {
-    wrap.replaceChildren(h("p", { class: "empty" }, "No forecast data for this location and time window. Try polling first."));
+  const wrap = $("fc-wrap");
+  if (!fc.data.series.length) {
+    wrap.replaceChildren(h("p", { class: "empty" },
+      "No forecasts for today from polls made at or before midnight UTC. History must be collected before the target date."));
     return;
   }
-  if (fc.view === "chart") renderForecastChart(wrap, provList, byTime);
-  else renderForecastTable(wrap, provList, byTime, obsOnlyProviders);
-}
-
-function renderForecastTable(wrap, provList, byTime, obsOnlyProviders) {
   const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
-  const now = new Date();
-  const times = [...byTime.keys()].sort();
+  if (!fc.data.series.some((s) => s.points.some((p) => p.values[param.key]))) {
+    wrap.replaceChildren(h("p", { class: "empty" }, `No "${param.label}" data for today's eligible polls.`));
+    return;
+  }
+  if (fc.view === "chart") renderForecastChart(wrap, fc.data, param);
+  else renderForecastTable(wrap, fc.data, param);
+}
 
+function renderForecastTable(wrap, data, param) {
   const thead = h("thead", {},
     h("tr", {},
-      h("th", { class: "fc-time-col" }, "Time (UTC)"),
-      ...provList.map((p) => h("th", {}, p)),
+      h("th", { class: "fc-time-col", scope: "col" }, "Lead time (h)"),
+      ...data.series.map((s) => h("th", { scope: "col" }, s.provider)),
     ),
   );
-
-  const rows = [];
-  let lastDay = null;
-
-  for (const t of times) {
-    const date = new Date(t);
-    const dayKey = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-    if (fc.granularity === "hourly" && dayKey !== lastDay) {
-      rows.push(h("tr", { class: "fc-day-head" },
-        h("td", { colspan: String(provList.length + 1) }, dayKey),
-      ));
-      lastDay = dayKey;
+  const cells = data.series.map((s) => {
+    const byLead = new Map();
+    for (const point of s.points) {
+      if (!byLead.has(point.lead)) byLead.set(point.lead, []);
+      byLead.get(point.lead).push(point);
     }
-
-    const timeLabel = fc.granularity === "daily"
-      ? date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
-      : date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
-
-    const byProv = byTime.get(t);
-    rows.push(h("tr", {},
-      h("td", { class: "fc-time" }, timeLabel),
-      ...provList.map((p) => {
-        const r = byProv.get(p);
-        if (!r) {
-          if (obsOnlyProviders.has(p) && new Date(t) >= now)
-            return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "-"));
-          return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
-        }
-
-        const val = paramValue(r, param);
-        const isTemp = param.unit === "°C";
-        const valEl = val != null
-          ? h("span", { class: `fc-temp ${isTemp ? tempClass(val) : "mild"}` }, fmtParamValue(val, param))
-          : h("span", { class: "fc-temp mild" }, "—");
-
-        const condText = CONDITION_LABEL[r.condition] || r.condition || "";
-        const metaChildren = condText ? [h("span", { class: "fc-cond" }, condText)] : [];
-
-        return h("td", { class: "fc-cell" },
-          valEl,
-          metaChildren.length ? h("div", { class: "fc-meta" }, ...metaChildren) : null,
+    return byLead;
+  });
+  const rows = data.leads.map((lead) => h("tr", {},
+    h("th", { class: "fc-time", scope: "row" }, fmtLead(lead)),
+    ...cells.map((byLead) => {
+      const points = byLead.get(lead) || [];
+      if (!points.length) return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
+      return h("td", { class: "fc-cell" }, ...points.map((point) => {
+        const value = point.values[param.key];
+        if (!value) return h("div", { class: "fc-reading", title: `Poll #${point.pollID} at ${point.polledAt}` }, "—");
+        const color = param.unit === "°C" ? tempClass(value.value) : "mild";
+        return h("div", { class: "fc-reading", title: pointDescription(point, value, param) },
+          h("span", { class: `fc-temp ${color}` }, fmtParamValue(value.value, param)),
+          h("span", { class: value.partial ? "fc-coverage partial" : "fc-coverage" }, coverageText(value)),
         );
-      }),
-    ));
-  }
-
-  wrap.replaceChildren(h("table", { class: "fc-table" }, thead, h("tbody", {}, ...rows)));
+      }));
+    }),
+  ));
+  wrap.replaceChildren(h("table", { class: "fc-table" },
+    h("caption", { class: "sr" }, `${param.label} forecast evolution for ${fc.target.toISOString().slice(0, 10)} UTC`),
+    thead, h("tbody", {}, ...rows),
+  ));
 }
 
-function renderForecastChart(wrap, provList, byTime) {
-  const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
-  const allTimes = [...byTime.keys()].sort();
-  const n = allTimes.length;
-
-  const series = provList.map((prov, i) => {
-    const pts = allTimes.map((t, xi) => {
-      const r = byTime.get(t)?.get(prov);
-      return { xi, v: r ? paramValue(r, param) : null };
-    });
-    return { prov, pts, color: CHART_COLORS[i % CHART_COLORS.length] };
-  }).filter((s) => s.pts.some((p) => p.v != null));
-
-  if (!series.length) {
-    wrap.replaceChildren(h("p", { class: "empty" }, `No "${param.label}" data in this window.`));
-    return;
-  }
+function renderForecastChart(wrap, data, param) {
+  const series = data.series.map((s, i) => ({
+    ...s, color: CHART_COLORS[i % CHART_COLORS.length],
+  })).filter((s) => s.points.some((p) => p.values[param.key]));
 
   let yMin = Infinity, yMax = -Infinity;
-  for (const s of series) for (const p of s.pts) if (p.v != null) { yMin = Math.min(yMin, p.v); yMax = Math.max(yMax, p.v); }
+  for (const s of series) for (const p of s.points) {
+    const value = p.values[param.key];
+    if (value) {
+      yMin = Math.min(yMin, value.value);
+      yMax = Math.max(yMax, value.value);
+    }
+  }
   if (yMin === yMax) { yMin -= 1; yMax += 1; }
   const yPad = (yMax - yMin) * 0.1;
   yMin -= yPad; yMax += yPad;
 
-  const W = 800, H = 260, ML = 52, MR = 16, MT = 12, MB = 36;
+  const xMax = data.leads[0], xMin = data.leads[data.leads.length - 1];
+  const W = 800, H = 280, ML = 62, MR = 26, MT = 16, MB = 54;
   const cW = W - ML - MR, cH = H - MT - MB;
-  const xS = (xi) => ML + (n > 1 ? xi / (n - 1) : 0.5) * cW;
-  const yS = (v)  => MT + (1 - (v - yMin) / (yMax - yMin)) * cH;
+  const xS = (lead) => ML + (xMax === xMin ? 0.5 : (xMax - lead) / (xMax - xMin)) * cW;
+  const yS = (v) => MT + (1 - (v - yMin) / (yMax - yMin)) * cH;
 
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "fc-chart-svg",
-    role: "img", "aria-label": `${param.label} chart` });
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`, class: "fc-chart-svg", role: "img",
+    "aria-label": `${param.label} forecast evolution for ${fc.target.toISOString().slice(0, 10)} UTC; lead time decreases from left to right`,
+  });
 
   for (const tick of niceYTicks(yMin, yMax, 5)) {
     const y = yS(tick).toFixed(1);
@@ -840,38 +774,60 @@ function renderForecastChart(wrap, provList, byTime) {
     svg.append(lbl);
   }
 
-  const maxXLabels = fc.granularity === "daily" ? n : 8;
-  const xStep = Math.max(1, Math.ceil(n / maxXLabels));
-  for (let xi = 0; xi < n; xi += xStep) {
-    const t = new Date(allTimes[xi]);
-    const xLbl = svgEl("text", { x: xS(xi).toFixed(1), y: H - MB + 14, class: "fc-chart-tick", "text-anchor": "middle" });
-    xLbl.textContent = fc.granularity === "daily"
-      ? t.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
-      : t.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
-    svg.append(xLbl);
+  const xTicks = xMax === xMin ? [xMin] : niceYTicks(xMin, xMax, 6);
+  for (const tick of xTicks) {
+    const label = svgEl("text", { x: xS(tick), y: H - MB + 18, class: "fc-chart-tick", "text-anchor": "middle" });
+    label.textContent = fmtLead(tick);
+    svg.append(label);
   }
-
-  svg.append(svgEl("line", { x1: ML, y1: (MT + cH).toFixed(1), x2: ML + cW, y2: (MT + cH).toFixed(1), class: "fc-chart-axis" }));
-
+  const axisLabel = svgEl("text", { x: ML + cW / 2, y: H - 5, class: "fc-chart-tick", "text-anchor": "middle" });
+  axisLabel.textContent = "Lead time (h) — longest to shortest";
+  svg.append(axisLabel, svgEl("line", {
+    x1: ML, y1: MT + cH, x2: ML + cW, y2: MT + cH, class: "fc-chart-axis",
+  }));
   for (const s of series) {
-    let d = ""; let gap = true;
-    for (const p of s.pts) {
-      if (p.v == null) { gap = true; continue; }
-      const x = xS(p.xi).toFixed(1), y = yS(p.v).toFixed(1);
+    let d = "", gap = true;
+    for (const point of s.points) {
+      const value = point.values[param.key];
+      if (!value) { gap = true; continue; }
+      const x = xS(point.lead).toFixed(2), y = yS(value.value).toFixed(2);
       d += gap ? `M${x} ${y}` : ` L${x} ${y}`;
       gap = false;
     }
     svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
   }
-
+  const detail = h("p", { class: "hint small fc-chart-detail" }, "Focus or hover a point for coverage and poll details.");
+  // Draw markers after all paths so even a single-reading series remains visible.
+  for (const s of series) for (const point of s.points) {
+    const value = point.values[param.key];
+    if (!value) continue;
+    const description = pointDescription(point, value, param);
+    const marker = svgEl("circle", {
+      cx: xS(point.lead).toFixed(2), cy: yS(value.value).toFixed(2),
+      r: value.partial ? 4.5 : 3.5, fill: s.color,
+      class: value.partial ? "fc-chart-point partial" : "fc-chart-point",
+      tabindex: "0", role: "img", "aria-label": description,
+    });
+    const title = svgEl("title");
+    title.textContent = description;
+    marker.append(title);
+    marker.addEventListener("focus", () => { detail.textContent = description; });
+    marker.addEventListener("mouseenter", () => { detail.textContent = description; });
+    svg.append(marker);
+  }
   const legend = h("div", { class: "fc-chart-legend" },
-    ...series.map((s) => h("span", { class: "fc-chart-legend-item" },
-      h("span", { class: "fc-chart-swatch", style: `background:${s.color}` }),
-      s.prov,
-    )),
+    ...series.map((s) => {
+      const swatch = svgEl("svg", { viewBox: "0 0 12 12", class: "fc-chart-swatch", "aria-hidden": "true" });
+      swatch.append(svgEl("rect", { width: 12, height: 12, rx: 2, fill: s.color }));
+      return h("span", { class: "fc-chart-legend-item" }, swatch, s.provider);
+    }),
   );
 
-  wrap.replaceChildren(svg, legend);
+  const partial = series.some((s) => s.points.some((p) => p.values[param.key]?.partial));
+  wrap.replaceChildren(svg, legend, detail, ...(partial ? [
+    h("p", { class: "fc-coverage partial" },
+      "Partial coverage: outlined points use fewer than 24 hours of available values. Focus or hover a point for coverage and poll details."),
+  ] : []));
 }
 
 function setupForecast() {
@@ -880,9 +836,6 @@ function setupForecast() {
     fc.location = state.locations[0].name;
     $("fc-location").value = fc.location;
   }
-  renderFcWindowLabel(fcWindowStart(), fcWindowEnd(fcWindowStart()));
-
-  // Populate parameter dropdown
   const paramSel = $("fc-param");
   paramSel.replaceChildren(...PARAMS.map((p) =>
     h("option", { value: p.key, selected: p.key === fc.param },
@@ -891,38 +844,29 @@ function setupForecast() {
 
   $("fc-location").addEventListener("change", (e) => {
     fc.location = e.target.value;
-    fc.windowStart = null;
     loadForecast();
   });
 
   paramSel.addEventListener("change", (e) => {
     fc.param = e.target.value;
-    loadForecast();
+    renderForecastView();
   });
-
-  const setGran = (g) => {
-    fc.granularity = g;
-    fc.windowStart = null;
-    $("fc-gran-hourly").setAttribute("aria-pressed", String(g === "hourly"));
-    $("fc-gran-daily").setAttribute("aria-pressed", String(g === "daily"));
-    loadForecast();
-  };
-  $("fc-gran-hourly").addEventListener("click", () => setGran("hourly"));
-  $("fc-gran-daily").addEventListener("click", () => setGran("daily"));
-  $("fc-prev").addEventListener("click", () => shiftWindow(-1));
-  $("fc-next").addEventListener("click", () => shiftWindow(1));
-  $("fc-now").addEventListener("click", () => { fc.windowStart = null; loadForecast(); });
 
   const setView = (v) => {
     fc.view = v;
     $("fc-view-table").setAttribute("aria-pressed", String(v === "table"));
     $("fc-view-chart").setAttribute("aria-pressed", String(v === "chart"));
-    loadForecast();
+    renderForecastView();
   };
   $("fc-view-table").addEventListener("click", () => setView("table"));
   $("fc-view-chart").addEventListener("click", () => setView("chart"));
 
-  if (fc.location) loadForecast();
+  fc.ready = true;
+  loadForecast();
+  setInterval(() => {
+    if (currentTab === "forecast" &&
+        (!fc.controller || fc.target.getTime() !== ForecastEvolution.today().getTime())) loadForecast();
+  }, 60000);
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────

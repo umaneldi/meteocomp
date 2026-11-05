@@ -15,16 +15,49 @@ Open http://localhost:8080/ and configure everything from the web UI:
 - **Locations** — search a place (Open-Meteo geocoding, from the browser) or enter coordinates.
 - **Providers** — enable/disable instances, add several of the same type, set options and
   provision API keys. Keys are write-only: the API only reports whether a key is set.
-- **Forecast comparison** — the *Forecast* section shows a timeline table with one column per
-  provider. When a time slot has been polled more than once (e.g. the same target hour was
-  forecast this morning and again this afternoon), the table shows the **most recently polled**
-  reading for that slot. All historical readings remain in the database and are queryable via
-  the API.
+- **Forecast evolution** — the *Forecast* tab shows how each provider's daily forecast for
+  **today (UTC)** evolved across historical polls. The table's row index and chart's numeric
+  X axis are **lead time in hours**, decreasing from oldest to newest polls. Every poll is
+  retained, not just the latest revision. Choose a location, daily statistic, and table/chart
+  view; the default statistic is daily mean temperature.
 
 Settings are persisted in the database. On first start the database is seeded with defaults
 (Open-Meteo enabled, keyed providers disabled, no locations). Saving restarts the poller; each
 provider resumes from its last recorded poll, so saving or restarting does not trigger extra API calls.
 Use *Poll now* to fetch immediately.
+
+### Forecast evolution
+
+Lead time is `(today's midnight UTC - poll start time)` in hours, including fractional
+hours. Only forecasts polled **at or before that midnight** are shown; observations and
+later polls are excluded. History must therefore be collected before the target date.
+The view loads all matching history through cursor pagination, refreshes every minute while
+active and on tab entry, and rolls over to the new UTC date automatically.
+
+Each provider/poll supplies one daily result. Native daily values are preferred per statistic.
+Missing native values are derived from that poll's hourly forecasts, or 3-hourly forecasts
+when no hourly records exist. Different polls and resolutions are never mixed:
+
+| Statistic | Sub-daily aggregation |
+| --- | --- |
+| Temperature, humidity, pressure, cloud cover, visibility | Mean |
+| Minimum / maximum temperature | Minimum / maximum of per-slot extrema, falling back to per-slot temperature |
+| Feels-like, wind speed, wind gust, UV index | Maximum |
+| Precipitation | Sum |
+
+Mean temperature never falls back to daily maximum temperature. Missing values remain
+unavailable, not zero. Derived values may use a partial day: the table flags **partial
+coverage** with covered hours and available slot counts, and the chart outlines partial
+points and shows a warning. Coverage is measured per statistic, so a missing field reduces
+its coverage even if other fields span the whole day. Partial precipitation totals and
+extrema must not be interpreted as full-day values. Hover a table value or focus/hover a
+chart point for the poll time, lead time and provenance.
+
+Native daily forecasts retain their provider's calendar-day definition, stored under that
+date at midnight UTC; derived values cover the actual UTC day. Providers' native daily
+definitions can therefore differ from derived UTC summaries. Exact lead times are not
+bucketed, so asynchronously polled providers may occupy different table rows.
+All historical readings remain stored and available through the API.
 
 ### API keys from environment variables
 
@@ -156,13 +189,27 @@ a throwaway schema in that database.
 | GET    | `/api/v1/locations`  | |
 | GET    | `/api/v1/polls`      | `provider`, `location`, `status`, `limit` |
 | POST   | `/api/v1/polls`      | `provider` (optional) — trigger an immediate poll |
-| GET    | `/api/v1/readings`   | `provider`, `location`, `granularity`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit` |
+| GET    | `/api/v1/readings`   | `provider`, `location`, `granularity`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit`, `order`, `before_id` |
 | GET    | `/api/v1/stations`   | `q` (min 2 chars) — search Infoclimat stations by ID or name |
 
 `limit` defaults to 500 (max 10000).
+
+For stable readings pagination, request `order=id_desc`, then pass the last reading's
+positive integer ID as `before_id` on each subsequent request, keeping all other filters
+unchanged. Pages remain JSON arrays; stop at a short or empty page. The cursor is exclusive.
+New higher IDs inserted after the first page appear on a subsequent refresh, not during the
+current traversal. Without `order`, the existing poll-time ordering is unchanged;
+`before_id` requires `order=id_desc`. Unsupported order/cursor values return `400`.
 
 `PUT /api/v1/settings` takes the same document as `GET` returns. Per provider, `api_key`
 is optional: omitted keeps the stored key, `""` removes it, any other value replaces it;
 `previous_name` keeps the key when an instance is renamed. Invalid settings (bad interval or
 coordinates, duplicate names, enabled provider without a required key, ...) return `400` and
 nothing is saved.
+
+## Development checks
+
+- `make test` runs Go vet and all Go tests.
+- `make test-web` runs JavaScript syntax and forecast aggregation/pagination tests using
+  Node.js 22 or newer, with no npm dependencies or frontend build step.
+- `make build` builds the service with its embedded UI.
