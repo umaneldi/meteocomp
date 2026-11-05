@@ -69,6 +69,7 @@ func (s *Server) ApplySettings(ctx context.Context, set config.Settings, persist
 // settingsDoc is the JSON representation of the settings. API keys are write-only.
 type settingsDoc struct {
 	PollInterval string             `json:"poll_interval"`
+	ForecastDays int                `json:"forecast_days"`
 	Locations    []weather.Location `json:"locations"`
 	Providers    []providerDoc      `json:"providers"`
 }
@@ -99,7 +100,7 @@ func keyHint(k string) string {
 
 func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 	cur := s.Settings()
-	doc := settingsDoc{PollInterval: cur.PollInterval.String(), Locations: cur.Locations, Providers: []providerDoc{}}
+	doc := settingsDoc{PollInterval: cur.PollInterval.String(), ForecastDays: cur.ForecastDays, Locations: cur.Locations, Providers: []providerDoc{}}
 	for _, p := range cur.Providers {
 		opts := p.Options
 		if opts == nil {
@@ -134,7 +135,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	for _, p := range cur.Providers {
 		stored[p.Name] = p
 	}
-	next := config.Settings{PollInterval: interval, Locations: doc.Locations}
+	next := config.Settings{PollInterval: interval, ForecastDays: doc.ForecastDays, Locations: doc.Locations}
 	for _, d := range doc.Providers {
 		prevName := d.PreviousName
 		if prevName == "" {

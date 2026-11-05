@@ -133,7 +133,7 @@ const ForecastEvolution = (() => {
     };
   }
 
-  function build(records, target, providerOrder = []) {
+  function build(records, target, providerOrder = [], maxLeadHours = Infinity) {
     const start = target.getTime();
     const groups = new Map();
     for (const r of records) {
@@ -152,13 +152,14 @@ const ForecastEvolution = (() => {
     for (const group of groups.values()) {
       const records = [...group.values()];
       const representative = records[0];
+      const lead = (start - new Date(representative.polled_at).getTime()) / HOUR;
+      if (lead > maxLeadHours) continue;
       const native = records.filter((r) => r.granularity === "daily").sort((a, b) => b.id - a.id)[0];
       const hourly = records.filter((r) => r.granularity === "hourly");
       const slots = hourly.length ? hourly : records.filter((r) => r.granularity === "3h");
       const point = {
         provider: representative.provider, pollID: representative.poll_id,
-        polledAt: representative.polled_at,
-        lead: (start - new Date(representative.polled_at).getTime()) / HOUR,
+        polledAt: representative.polled_at, lead,
         values: Object.fromEntries(params.map((param) => [param.key, dailyValue(native, slots, param, start)])),
       };
       if (!byProvider.has(point.provider)) byProvider.set(point.provider, []);
@@ -170,9 +171,12 @@ const ForecastEvolution = (() => {
       provider,
       points: byProvider.get(provider).sort((a, b) => b.lead - a.lead || a.pollID - b.pollID),
     }));
+    const maxLead = Number.isFinite(maxLeadHours) ? maxLeadHours
+      : series.flatMap((s) => s.points).reduce((m, p) => Math.max(m, p.lead), 0);
     return {
       series,
       leads: [...new Set(series.flatMap((s) => s.points.map((p) => p.lead)))].sort((a, b) => b - a),
+      maxLead,
     };
   }
 

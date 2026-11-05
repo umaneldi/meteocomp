@@ -21,6 +21,7 @@ func testSettingsRoundTrip(t *testing.T, st *SQLDB) {
 
 	in := config.Settings{
 		PollInterval: 90 * time.Minute,
+		ForecastDays: 7,
 		Locations: []weather.Location{
 			{Name: "oslo", City: "Oslo", Country: "NO", Latitude: 59.91, Longitude: 10.75},
 			{Name: "lyon", City: "Lyon", Country: "FR", Latitude: 45.76, Longitude: 4.83},

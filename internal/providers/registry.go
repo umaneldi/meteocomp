@@ -127,6 +127,10 @@ func Build(s config.Settings) ([]weather.Provider, error) {
 		if !pc.IsEnabled() {
 			continue
 		}
+		if pc.Options == nil {
+			pc.Options = map[string]any{}
+		}
+		pc.Options["forecast_days"] = s.ForecastDays
 		p, err := New(pc)
 		if err != nil {
 			errs = append(errs, err)

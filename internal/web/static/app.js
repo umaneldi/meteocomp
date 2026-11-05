@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   types: [],      // provider type descriptions from /api/v1/provider-types
   interval: "1h",
+  forecastDays: 7,
   locations: [],
   providers: [],
   lastDoc: null,  // last settings document received from the server
@@ -143,6 +144,7 @@ const typeInfo = (t) => state.types.find((x) => x.type === t);
 function loadDoc(doc) {
   state.lastDoc = doc;
   state.interval = prettyDuration(doc.poll_interval);
+  state.forecastDays = doc.forecast_days || 7;
   state.locations = doc.locations.map((l) => ({ ...l, _id: ++uid }));
   state.providers = doc.providers.map((p) => ({
     _id: ++uid,
@@ -164,6 +166,7 @@ function loadDoc(doc) {
 function serialize() {
   return {
     poll_interval: state.interval.trim(),
+    forecast_days: state.forecastDays,
     locations: state.locations.map((l) => ({
       name: l.name.trim(),
       city: l.city.trim(),
@@ -209,6 +212,8 @@ function problems() {
   const out = [];
   const ms = durationMs(state.interval);
   if (!(ms >= 60000)) out.push("Polling interval must be a duration of at least 1m.");
+  const fd = state.forecastDays;
+  if (!Number.isInteger(fd) || fd < 1 || fd > 16) out.push("Forecast days must be an integer between 1 and 16.");
   const names = new Set();
   for (const l of state.locations) {
     const n = l.name.trim();
@@ -244,10 +249,12 @@ function updateDirty(errorMsg) {
   $("save").disabled = state.saving || issues.length > 0 || !dirty;
   $("discard").disabled = state.saving;
   $("interval").setAttribute("aria-invalid", String(!(durationMs(state.interval) >= 60000)));
+  $("forecast-days").setAttribute("aria-invalid", String(
+    !Number.isInteger(state.forecastDays) || state.forecastDays < 1 || state.forecastDays > 16));
   for (const b of $("interval-presets").children) b.setAttribute("aria-pressed", String(b.dataset.v === state.interval.trim()));
 }
 
-// ── Polling interval ──────────────────────────────────────────────────────
+// ── Polling interval & global settings ────────────────────────────────────
 function renderInterval() {
   const presets = $("interval-presets");
   presets.replaceChildren(...PRESETS.map((v) => h("button", {
@@ -255,6 +262,7 @@ function renderInterval() {
     onclick: () => { state.interval = v; $("interval").value = v; updateDirty(); },
   }, v)));
   $("interval").value = state.interval;
+  $("forecast-days").value = state.forecastDays;
 }
 
 // ── Locations ─────────────────────────────────────────────────────────────
@@ -657,7 +665,7 @@ async function loadForecast() {
       loadForecast();
       return;
     }
-    fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name));
+    fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name), state.forecastDays * 24);
     fc.observations = ForecastEvolution.buildObservation(obsRecords, target);
     renderForecastView();
   } catch (e) {
@@ -779,7 +787,7 @@ function renderForecastChart(wrap, data, param) {
   const yPad = (yMax - yMin) * 0.1;
   yMin -= yPad; yMax += yPad;
 
-  const xMax = data.leads[0], xMin = data.leads[data.leads.length - 1];
+  const xMax = data.maxLead, xMin = 0;
   const W = 800, H = 280, ML = 62, MR = 26, MT = 16, MB = 54;
   const cW = W - ML - MR, cH = H - MT - MB;
   const xS = (lead) => ML + (xMax === xMin ? 0.5 : (xMax - lead) / (xMax - xMin)) * cW;
@@ -943,6 +951,11 @@ async function boot() {
   setupStationSearch();
 
   $("interval").addEventListener("input", (e) => { state.interval = e.target.value; updateDirty(); });
+  $("forecast-days").addEventListener("input", (e) => {
+    const v = parseInt(e.target.value, 10);
+    state.forecastDays = Number.isNaN(v) ? e.target.value : v;
+    updateDirty();
+  });
   $("add-location").addEventListener("click", () => {
     addLocation({});
     $("locations-body").lastElementChild?.querySelector("input")?.focus();

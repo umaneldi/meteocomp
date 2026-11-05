@@ -6,6 +6,7 @@
 #   docker run -e METEOCOMP_CONFIG=/etc/meteocomp/config.yaml -e OWM_ENABLED=true -e OWM_API_KEY=... ...
 
 poll_interval: ${METEOCOMP_POLL_INTERVAL:-1h}
+forecast_days: ${METEOCOMP_FORECAST_DAYS:-7}
 
 # YAML flow sequence, e.g.
 # [{name: paris, city: Paris, country: FR, latitude: 48.8566, longitude: 2.3522}]
@@ -15,12 +16,11 @@ providers:
   - name: open-meteo
     type: openmeteo
     enabled: ${OPENMETEO_ENABLED:-true}
-    options: { forecast_days: ${OPENMETEO_FORECAST_DAYS:-7} }
 
   - name: meteofrance
     type: openmeteo
     enabled: ${METEOFRANCE_ENABLED:-false}
-    options: { endpoint: meteofrance, forecast_days: ${METEOFRANCE_FORECAST_DAYS:-4} }
+    options: { endpoint: meteofrance }
 
   # API keys come from OWM_API_KEY / WEATHER_API_KEY at runtime (or the web UI).
   - name: owm
@@ -30,4 +30,3 @@ providers:
   - name: weatherapi
     type: weatherapi
     enabled: ${WEATHERAPI_ENABLED:-false}
-    options: { days: ${WEATHERAPI_DAYS:-3} }

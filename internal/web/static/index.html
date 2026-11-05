@@ -19,7 +19,7 @@
         </svg>
         <div>
           <h1>meteocomp</h1>
-          <p class="tagline">Forecast comparison station · settings<span id="app-version"></span></p>
+          <p class="tagline">Forecast comparison station<span id="app-version"></span></p>
         </div>
       </div>
     </div>
@@ -52,6 +52,13 @@
         </label>
       </div>
       <p class="hint small" id="interval-help">Go duration syntax: <code>m</code> minutes, <code>h</code> hours. Minimum <code>1m</code>.</p>
+      <div class="interval-row">
+        <label class="field interval-custom">
+          <span>Forecast days</span>
+          <input id="forecast-days" type="number" min="1" max="16" step="1" spellcheck="false" autocomplete="off" placeholder="1–16" aria-describedby="forecast-days-help">
+        </label>
+      </div>
+      <p class="hint small" id="forecast-days-help">Number of forecast days requested from every provider and shown on the forecast chart (1–16).</p>
     </section>
 
     <section id="locations" class="panel" hidden>

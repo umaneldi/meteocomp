@@ -1,8 +1,7 @@
 // Package weatherapi implements the WeatherAPI.com provider
 // (https://www.weatherapi.com/docs/). Requires an API key.
 //
-// Options:
-//   - days (int, default 3, max 14; the free plan is limited to 3)
+// forecast_days is set globally in Settings and injected at build time; capped at 14 (the free plan is limited to 3).
 package weatherapi
 
 import (
@@ -29,9 +28,6 @@ func init() {
 		RequiresAPIKey: true,
 		APIKeyEnv:      "WEATHER_API_KEY",
 		SignupURL:      "https://www.weatherapi.com/my/",
-		Options: []providers.Option{
-			{Name: "days", Kind: "int", Default: "3", Description: "Days of forecast, 1-14 (the free plan is limited to 3)"},
-		},
 	})
 }
 
@@ -47,12 +43,10 @@ func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, erro
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("provider %q: api_key is required", cfg.Name)
 	}
-	p := &Provider{name: cfg.Name, apiKey: cfg.APIKey, baseURL: cfg.BaseURL, days: cfg.IntOption("days", 3), client: client}
+	days := min(cfg.IntOption("forecast_days", 7), 14)
+	p := &Provider{name: cfg.Name, apiKey: cfg.APIKey, baseURL: cfg.BaseURL, days: days, client: client}
 	if p.baseURL == "" {
 		p.baseURL = defaultBaseURL
-	}
-	if p.days < 1 || p.days > 14 {
-		return nil, fmt.Errorf("provider %q: days must be between 1 and 14", cfg.Name)
 	}
 	return p, nil
 }

@@ -29,7 +29,7 @@ func TestFetch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p, err := New(config.ProviderConfig{Name: "wa", APIKey: "k", BaseURL: srv.URL}, srv.Client())
+	p, err := New(config.ProviderConfig{Name: "wa", APIKey: "k", BaseURL: srv.URL, Options: map[string]any{"forecast_days": 3}}, srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

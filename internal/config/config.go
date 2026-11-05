@@ -38,7 +38,9 @@ type HTTPConfig struct {
 // Settings are the runtime settings persisted in the database.
 type Settings struct {
 	// PollInterval is shared by all providers.
-	PollInterval time.Duration      `yaml:"poll_interval"`
+	PollInterval time.Duration `yaml:"poll_interval"`
+	// ForecastDays is the number of forecast days requested from every provider (1-16).
+	ForecastDays int                `yaml:"forecast_days"`
 	Locations    []weather.Location `yaml:"locations"`
 	Providers    []ProviderConfig   `yaml:"providers"`
 }
@@ -86,11 +88,12 @@ func (p ProviderConfig) StringOption(key, def string) string {
 func DefaultSettings() Settings {
 	return Settings{
 		PollInterval: DefaultPollInterval,
+		ForecastDays: 7,
 		Locations:    []weather.Location{},
 		Providers: []ProviderConfig{
-			{Name: "open-meteo", Type: "openmeteo", Enabled: new(true), Options: map[string]any{"forecast_days": 7}},
+			{Name: "open-meteo", Type: "openmeteo", Enabled: new(true), Options: map[string]any{}},
 			{Name: "meteofrance", Type: "openmeteo", Enabled: new(false),
-				Options: map[string]any{"endpoint": "meteofrance", "forecast_days": 4}},
+				Options: map[string]any{"endpoint": "meteofrance"}},
 			{Name: "owm", Type: "openweathermap", Enabled: new(false)},
 			{Name: "weatherapi", Type: "weatherapi", Enabled: new(false), Options: map[string]any{"days": 3}},
 		},
@@ -139,6 +142,9 @@ func (s *Settings) Normalize() {
 	if s.PollInterval == 0 {
 		s.PollInterval = DefaultPollInterval
 	}
+	if s.ForecastDays == 0 {
+		s.ForecastDays = 7
+	}
 	if s.Locations == nil {
 		s.Locations = []weather.Location{}
 	}
@@ -162,6 +168,9 @@ func (s *Settings) Normalize() {
 func (s *Settings) Validate() error {
 	if s.PollInterval < MinPollInterval {
 		return fmt.Errorf("config: poll interval must be at least %s", MinPollInterval)
+	}
+	if s.ForecastDays < 1 || s.ForecastDays > 16 {
+		return fmt.Errorf("config: forecast_days must be between 1 and 16")
 	}
 	seen := map[string]bool{}
 	for i, l := range s.Locations {

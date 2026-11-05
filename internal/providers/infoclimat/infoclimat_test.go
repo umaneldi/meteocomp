@@ -68,7 +68,7 @@ func TestFetch(t *testing.T) {
 		Name:    "ic",
 		APIKey:  "tok",
 		BaseURL: srv.URL + "/",
-		Options: map[string]any{"past_days": 1},
+		Options: map[string]any{"forecast_days": 1},
 	}, srv.Client())
 	if err != nil {
 		t.Fatal(err)
@@ -203,13 +203,5 @@ func TestValidation(t *testing.T) {
 	client := http.DefaultClient
 	if _, err := New(config.ProviderConfig{Name: "ic"}, client); err == nil {
 		t.Error("missing api_key: expected error")
-	}
-	if _, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok",
-		Options: map[string]any{"past_days": 31}}, client); err == nil {
-		t.Error("past_days=31: expected error")
-	}
-	if _, err := New(config.ProviderConfig{Name: "ic", APIKey: "tok",
-		Options: map[string]any{"past_days": 0}}, client); err == nil {
-		t.Error("past_days=0: expected error")
 	}
 }

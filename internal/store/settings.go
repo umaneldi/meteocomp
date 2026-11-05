@@ -13,6 +13,7 @@ import (
 )
 
 const keyPollInterval = "poll_interval"
+const keyForecastDays = "forecast_days"
 
 // LoadSettings reads the settings saved by SaveSettings. The presence of the
 // poll_interval key marks the settings as initialized.
@@ -28,6 +29,15 @@ func (s *SQLDB) LoadSettings(ctx context.Context) (*config.Settings, bool, error
 	out := &config.Settings{Locations: []weather.Location{}, Providers: []config.ProviderConfig{}}
 	if out.PollInterval, err = time.ParseDuration(raw); err != nil {
 		return nil, false, fmt.Errorf("load settings: poll_interval: %w", err)
+	}
+	var fdRaw string
+	if err := s.db.QueryRowContext(ctx, s.d.rebind(`SELECT value FROM settings WHERE key = ?`), keyForecastDays).Scan(&fdRaw); err == nil {
+		if _, err := fmt.Sscanf(fdRaw, "%d", &out.ForecastDays); err != nil {
+			return nil, false, fmt.Errorf("load settings: forecast_days: %w", err)
+		}
+	}
+	if out.ForecastDays == 0 {
+		out.ForecastDays = config.DefaultSettings().ForecastDays
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -80,6 +90,10 @@ func (s *SQLDB) SaveSettings(ctx context.Context, cfg config.Settings) error {
 	if _, err := tx.ExecContext(ctx, s.d.rebind(`INSERT INTO settings (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`), keyPollInterval, cfg.PollInterval.String()); err != nil {
 		return fmt.Errorf("save poll_interval: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, s.d.rebind(`INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`), keyForecastDays, fmt.Sprintf("%d", cfg.ForecastDays)); err != nil {
+		return fmt.Errorf("save forecast_days: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, s.d.rebind(`DELETE FROM locations`)); err != nil {
 		return err

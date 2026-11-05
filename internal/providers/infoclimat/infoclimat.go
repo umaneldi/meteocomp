@@ -1,12 +1,9 @@
 // Package infoclimat implements the Infoclimat observation provider
 // (https://www.infoclimat.fr/opendata/). Requires a token.
 //
-// Options:
-//   - station_id (string, required): Infoclimat station ID, e.g. "07156".
-//   - past_days (int, default 7, max 30): days of past observations to fetch per poll.
-//
 // All returned data points have kind=observation. One provider instance corresponds
 // to one station; configure multiple instances to cover several locations.
+// The observation window matches the global forecast_days setting (injected at build time).
 package infoclimat
 
 import (
@@ -26,10 +23,8 @@ import (
 )
 
 const (
-	Type            = "infoclimat"
-	defaultBaseURL  = "https://www.infoclimat.fr/opendata/"
-	defaultPastDays = 7
-	maxPastDays     = 30
+	Type           = "infoclimat"
+	defaultBaseURL = "https://www.infoclimat.fr/opendata/"
 )
 
 func init() {
@@ -37,9 +32,6 @@ func init() {
 		Description:    "Infoclimat hourly weather station observations. Requires a token. Each location must have a station_id configured.",
 		RequiresAPIKey: true,
 		SignupURL:      "https://www.infoclimat.fr/opendata/",
-		Options: []providers.Option{
-			{Name: "past_days", Kind: "int", Default: "7", Description: "Days of past observations to fetch (1-30, default 7)"},
-		},
 	})
 }
 
@@ -57,10 +49,7 @@ func New(cfg config.ProviderConfig, client *http.Client) (weather.Provider, erro
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("provider %q: api_key (token) is required", cfg.Name)
 	}
-	pastDays := cfg.IntOption("past_days", defaultPastDays)
-	if pastDays < 1 || pastDays > maxPastDays {
-		return nil, fmt.Errorf("provider %q: past_days must be between 1 and %d", cfg.Name, maxPastDays)
-	}
+	pastDays := cfg.IntOption("forecast_days", 7)
 	base := cfg.BaseURL
 	if base == "" {
 		base = defaultBaseURL

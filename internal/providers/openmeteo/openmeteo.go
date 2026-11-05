@@ -8,7 +8,8 @@
 //     "dwd-icon", "gfs", "ecmwf", "metno", "gem", "jma"...
 //   - models (string, optional): comma-separated Open-Meteo model names passed as the
 //     "models" query parameter, e.g. "arome_france" on the meteofrance endpoint.
-//   - forecast_days (int, default 7, max 16)
+//
+// forecast_days is set globally in Settings and injected at build time.
 //
 // Endpoints only return the variables and days their models cover. Points with no
 // value at all (e.g. beyond the model horizon) are dropped.
@@ -43,7 +44,6 @@ func init() {
 			{Name: "endpoint", Kind: "string", Default: defaultEndpoint,
 				Description: `API path after /v1/: "forecast" (best models blend), "meteofrance", "dwd-icon", "gfs", "ecmwf", "metno"...`},
 			{Name: "models", Kind: "string", Description: `Optional comma-separated model names, e.g. "arome_france"`},
-			{Name: "forecast_days", Kind: "int", Default: "7", Description: "Days of forecast, 1-16"},
 		},
 	})
 }

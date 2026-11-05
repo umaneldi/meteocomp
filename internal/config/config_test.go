@@ -82,15 +82,14 @@ func TestDockerSeedConfig(t *testing.T) {
 	}
 
 	t.Setenv("METEOCOMP_POLL_INTERVAL", "20m")
+	t.Setenv("METEOCOMP_FORECAST_DAYS", "4")
 	t.Setenv("METEOCOMP_LOCATIONS", "[{name: lyon, latitude: 45.76, longitude: 4.83}]")
 	t.Setenv("OWM_ENABLED", "true")
-	t.Setenv("WEATHERAPI_DAYS", "2")
 	if cfg, err = Load("../../docker/config.yaml"); err != nil {
 		t.Fatalf("with env: %v", err)
 	}
-	owm, wa := cfg.Providers[2], cfg.Providers[3]
-	if cfg.PollInterval != 20*time.Minute || cfg.Locations[0].Name != "lyon" || !owm.IsEnabled() ||
-		wa.IntOption("days", 0) != 2 {
+	owm := cfg.Providers[2]
+	if cfg.PollInterval != 20*time.Minute || cfg.ForecastDays != 4 || cfg.Locations[0].Name != "lyon" || !owm.IsEnabled() {
 		t.Errorf("with env: %+v", cfg.Settings)
 	}
 }
