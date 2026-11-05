@@ -263,6 +263,7 @@ input::placeholder { color: var(--ink-3); }
 .fc-gran button:hover { color: var(--ink); background: var(--paper); }
 .fc-gran button[aria-pressed=true] { background: var(--ink); color: var(--paper); }
 .fc-target-date { font-family: var(--mono); font-size: .82rem; color: var(--ink-2); margin: 0; align-self: center; }
+.fc-time-heading { font-family: var(--mono); font-size: .82rem; color: var(--ink-2); margin: 0 0 .6rem; }
 .fc-wrap { overflow-x: auto; margin-top: .5rem; }
 .fc-table { border-collapse: collapse; font-size: .85rem; }
 .fc-table thead th {

@@ -79,12 +79,19 @@ const ForecastEvolution = (() => {
       const slots = byProvider.get(r.provider);
       if (!slots.has(r.forecast_time) || slots.get(r.forecast_time).id < r.id) slots.set(r.forecast_time, r);
     }
-    return [...byProvider.entries()].map(([provider, slotMap]) => ({
-      provider,
-      values: Object.fromEntries(params.map((param) => [
-        param.key, dailyValue(null, [...slotMap.values()], param, start),
-      ])),
-    }));
+    return [...byProvider.entries()].map(([provider, slotMap]) => {
+      const slots = [...slotMap.values()].sort((a, b) => (a.forecast_time < b.forecast_time ? -1 : 1));
+      const latest = slots[slots.length - 1];
+      return {
+        provider,
+        values: Object.fromEntries(params.map((param) => {
+          if (!latest) return [param.key, null];
+          const value = latest[param.key] ?? (param.fallback ? latest[param.fallback] : null);
+          if (!Number.isFinite(value)) return [param.key, null];
+          return [param.key, { value, source: `Observed at ${latest.forecast_time.slice(11, 16)}Z`, partial: false }];
+        })),
+      };
+    });
   }
 
   function coverageHours(intervals) {

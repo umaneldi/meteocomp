@@ -705,6 +705,7 @@ function renderForecastView() {
 }
 
 function renderForecastTable(wrap, data, param) {
+  const ftLabel = h("p", { class: "fc-time-heading" }, fc.target.toISOString().slice(0, 19) + "Z");
   const obsWithValue = fc.observations.filter((obs) => obs.values[param.key]);
   const thead = h("thead", {},
     h("tr", {},
@@ -748,7 +749,7 @@ function renderForecastTable(wrap, data, param) {
       );
     }),
   ));
-  wrap.replaceChildren(h("table", { class: "fc-table" },
+  wrap.replaceChildren(ftLabel, h("table", { class: "fc-table" },
     h("caption", { class: "sr" }, `${param.label} forecast evolution for ${fc.target.toISOString().slice(0, 10)} UTC`),
     thead, h("tbody", {}, ...rows),
   ));
@@ -870,7 +871,8 @@ function renderForecastChart(wrap, data, param) {
   );
 
   const partial = series.some((s) => s.points.some((p) => p.values[param.key]?.partial));
-  wrap.replaceChildren(svg, legend, detail, ...(partial ? [
+  const ftLabel = h("p", { class: "fc-time-heading" }, fc.target.toISOString().slice(0, 19) + "Z");
+  wrap.replaceChildren(ftLabel, svg, legend, detail, ...(partial ? [
     h("p", { class: "fc-coverage partial" },
       "Partial coverage: outlined points use fewer than 24 hours of available values. Focus or hover a point for coverage and poll details."),
   ] : []));
