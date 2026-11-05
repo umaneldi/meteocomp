@@ -590,6 +590,7 @@ const fc = {
   param: "temperature_c",
   view: "table",
   data: null,
+  observations: [],
   target: null,
   request: 0,
   controller: null,
@@ -632,6 +633,7 @@ async function loadForecast() {
   const controller = new AbortController();
   fc.controller = controller;
   fc.data = null;
+  fc.observations = [];
   const target = ForecastEvolution.today();
   fc.target = target;
   $("fc-target-date").textContent = `Today: ${target.toISOString().slice(0, 10)} (UTC)`;
@@ -645,16 +647,18 @@ async function loadForecast() {
   wrap.replaceChildren(h("p", { class: "fc-loading" }, "Loading…"));
 
   try {
-    const records = await ForecastEvolution.loadRecords(
-      (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal),
-      fc.location, target,
-    );
+    const getPage = (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal);
+    const [records, obsRecords] = await Promise.all([
+      ForecastEvolution.loadRecords(getPage, fc.location, target),
+      ForecastEvolution.loadObservations(getPage, fc.location, target).catch(() => []),
+    ]);
     if (request !== fc.request) return;
     if (target.getTime() !== ForecastEvolution.today().getTime()) {
       loadForecast();
       return;
     }
     fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name));
+    fc.observations = ForecastEvolution.buildObservation(obsRecords, target);
     renderForecastView();
   } catch (e) {
     if (request !== fc.request || e.name === "AbortError") return;
@@ -701,10 +705,12 @@ function renderForecastView() {
 }
 
 function renderForecastTable(wrap, data, param) {
+  const obsWithValue = fc.observations.filter((obs) => obs.values[param.key]);
   const thead = h("thead", {},
     h("tr", {},
       h("th", { class: "fc-time-col", scope: "col" }, "Lead time (h)"),
       ...data.series.map((s) => h("th", { scope: "col" }, s.provider)),
+      ...obsWithValue.map((obs) => h("th", { scope: "col", class: "fc-obs-col" }, `${obs.provider} (obs.)`)),
     ),
   );
   const cells = data.series.map((s) => {
@@ -730,6 +736,17 @@ function renderForecastTable(wrap, data, param) {
         );
       }));
     }),
+    ...obsWithValue.map((obs) => {
+      const value = obs.values[param.key];
+      if (!value) return h("td", { class: "fc-cell fc-obs-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
+      const color = param.unit === "°C" ? tempClass(value.value) : "mild";
+      return h("td", { class: "fc-cell fc-obs-cell" },
+        h("div", { class: "fc-reading", title: `${obs.provider} observation; ${coverageText(value)}` },
+          h("span", { class: `fc-temp ${color}` }, fmtParamValue(value.value, param)),
+          h("span", { class: value.partial ? "fc-coverage partial" : "fc-coverage" }, coverageText(value)),
+        ),
+      );
+    }),
   ));
   wrap.replaceChildren(h("table", { class: "fc-table" },
     h("caption", { class: "sr" }, `${param.label} forecast evolution for ${fc.target.toISOString().slice(0, 10)} UTC`),
@@ -745,6 +762,13 @@ function renderForecastChart(wrap, data, param) {
   let yMin = Infinity, yMax = -Infinity;
   for (const s of series) for (const p of s.points) {
     const value = p.values[param.key];
+    if (value) {
+      yMin = Math.min(yMin, value.value);
+      yMax = Math.max(yMax, value.value);
+    }
+  }
+  for (const obs of fc.observations) {
+    const value = obs.values[param.key];
     if (value) {
       yMin = Math.min(yMin, value.value);
       yMax = Math.max(yMax, value.value);
@@ -796,6 +820,23 @@ function renderForecastChart(wrap, data, param) {
     }
     svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
   }
+  const obsWithColor = fc.observations
+    .map((obs, i) => ({ ...obs, color: CHART_COLORS[(series.length + i) % CHART_COLORS.length] }))
+    .filter((obs) => obs.values[param.key]);
+  for (const obs of obsWithColor) {
+    const value = obs.values[param.key];
+    const y = yS(value.value).toFixed(2);
+    const label = `${obs.provider} observation: ${fmtParamValue(value.value, param)}${value.partial ? " (partial day)" : ""}`;
+    const lineEl = svgEl("line", {
+      x1: ML, y1: y, x2: ML + cW, y2: y,
+      class: "fc-chart-obs-line", stroke: obs.color,
+      role: "img", "aria-label": label,
+    });
+    const obsTitle = svgEl("title");
+    obsTitle.textContent = label;
+    lineEl.append(obsTitle);
+    svg.append(lineEl);
+  }
   const detail = h("p", { class: "hint small fc-chart-detail" }, "Focus or hover a point for coverage and poll details.");
   // Draw markers after all paths so even a single-reading series remains visible.
   for (const s of series) for (const point of s.points) {
@@ -820,6 +861,11 @@ function renderForecastChart(wrap, data, param) {
       const swatch = svgEl("svg", { viewBox: "0 0 12 12", class: "fc-chart-swatch", "aria-hidden": "true" });
       swatch.append(svgEl("rect", { width: 12, height: 12, rx: 2, fill: s.color }));
       return h("span", { class: "fc-chart-legend-item" }, swatch, s.provider);
+    }),
+    ...obsWithColor.map((obs) => {
+      const swatch = svgEl("svg", { viewBox: "0 0 24 12", class: "fc-chart-swatch", "aria-hidden": "true" });
+      swatch.append(svgEl("line", { x1: 2, y1: 6, x2: 22, y2: 6, stroke: obs.color, "stroke-width": 2.5, "stroke-dasharray": "5 3" }));
+      return h("span", { class: "fc-chart-legend-item" }, swatch, `${obs.provider} (obs.)`);
     }),
   );
 

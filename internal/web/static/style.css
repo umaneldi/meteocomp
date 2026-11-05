@@ -297,6 +297,9 @@ input::placeholder { color: var(--ink-3); }
 .fc-chart-legend { display: flex; gap: .9rem; flex-wrap: wrap; margin-top: .85rem; }
 .fc-chart-legend-item { display: flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--ink-2); }
 .fc-chart-swatch { width: .75rem; height: .75rem; border-radius: 2px; flex: none; }
+.fc-chart-obs-line { fill: none; stroke-width: 2; stroke-dasharray: 6 4; }
+.fc-obs-col { border-left: 2px solid var(--rule-strong); }
+.fc-obs-cell { border-left: 2px solid var(--rule); }
 @media (max-width: 720px) {
   .fc-controls { flex-direction: column; align-items: stretch; }
   .fc-target-date { align-self: flex-start; }

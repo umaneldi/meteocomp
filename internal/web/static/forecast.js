@@ -45,6 +45,48 @@ const ForecastEvolution = (() => {
     }
   }
 
+  async function loadObservations(getPage, location, target, pageSize = 1000) {
+    const query = new URLSearchParams({
+      location, kind: "observation", from: target.toISOString(),
+      to: new Date(target.getTime() + DAY).toISOString(),
+      order: "id_desc", limit: String(pageSize),
+    });
+    const records = [];
+    let before = Infinity;
+    for (;;) {
+      const page = await getPage(query);
+      if (!Array.isArray(page)) throw new Error("Invalid readings response");
+      for (const record of page) {
+        if (!Number.isSafeInteger(record.id) || record.id <= 0 || record.id >= before) {
+          throw new Error("Invalid readings pagination cursor");
+        }
+        before = record.id;
+        records.push(record);
+      }
+      if (page.length < pageSize) return records;
+      query.set("before_id", String(before));
+    }
+  }
+
+  function buildObservation(records, target) {
+    const start = target.getTime();
+    const byProvider = new Map();
+    for (const r of records) {
+      const time = new Date(r.forecast_time).getTime();
+      if (r.kind !== "observation" || time < start || time >= start + DAY) continue;
+      if (!["hourly", "3h"].includes(r.granularity)) continue;
+      if (!byProvider.has(r.provider)) byProvider.set(r.provider, new Map());
+      const slots = byProvider.get(r.provider);
+      if (!slots.has(r.forecast_time) || slots.get(r.forecast_time).id < r.id) slots.set(r.forecast_time, r);
+    }
+    return [...byProvider.entries()].map(([provider, slotMap]) => ({
+      provider,
+      values: Object.fromEntries(params.map((param) => [
+        param.key, dailyValue(null, [...slotMap.values()], param, start),
+      ])),
+    }));
+  }
+
   function coverageHours(intervals) {
     const sorted = intervals.slice().sort((a, b) => a[0] - b[0]);
     let covered = 0, end = -Infinity;
@@ -127,5 +169,5 @@ const ForecastEvolution = (() => {
     };
   }
 
-  return { params, today, loadRecords, build };
+  return { params, today, loadRecords, loadObservations, buildObservation, build };
 })();
