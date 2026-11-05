@@ -636,7 +636,7 @@ async function loadForecast() {
   fc.observations = [];
   const target = ForecastEvolution.today();
   fc.target = target;
-  $("fc-target-date").textContent = `Today: ${target.toISOString().slice(0, 10)} (UTC)`;
+  $("fc-target-date").textContent = `Today: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
   const wrap = $("fc-wrap");
   if (!fc.location) {
     fc.controller = null;
@@ -705,7 +705,7 @@ function renderForecastView() {
 }
 
 function renderForecastTable(wrap, data, param) {
-  const ftLabel = h("p", { class: "fc-time-heading" }, fc.target.toISOString().slice(0, 19) + "Z");
+  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + fc.target.toISOString().slice(0, 19) + "Z");
   const obsWithValue = fc.observations.filter((obs) => obs.values[param.key]);
   const thead = h("thead", {},
     h("tr", {},
@@ -871,7 +871,7 @@ function renderForecastChart(wrap, data, param) {
   );
 
   const partial = series.some((s) => s.points.some((p) => p.values[param.key]?.partial));
-  const ftLabel = h("p", { class: "fc-time-heading" }, fc.target.toISOString().slice(0, 19) + "Z");
+  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + fc.target.toISOString().slice(0, 19) + "Z");
   wrap.replaceChildren(ftLabel, svg, legend, detail, ...(partial ? [
     h("p", { class: "fc-coverage partial" },
       "Partial coverage: outlined points use fewer than 24 hours of available values. Focus or hover a point for coverage and poll details."),
