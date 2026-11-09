@@ -599,6 +599,7 @@ const fc = {
   view: "table",
   data: null,
   observations: [],
+  obsRecords: [],
   target: null,
   request: 0,
   controller: null,
@@ -642,6 +643,7 @@ async function loadForecast() {
   fc.controller = controller;
   fc.data = null;
   fc.observations = [];
+  fc.obsRecords = [];
   const target = ForecastEvolution.today();
   fc.target = target;
   $("fc-target-date").textContent = `Today: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -666,6 +668,7 @@ async function loadForecast() {
       return;
     }
     fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name), state.forecastDays * 24);
+    fc.obsRecords = obsRecords;
     fc.observations = ForecastEvolution.buildObservation(obsRecords, target);
     renderForecastView();
   } catch (e) {
@@ -674,6 +677,17 @@ async function loadForecast() {
   } finally {
     if (request === fc.request) fc.controller = null;
   }
+}
+
+function closestObsTime() {
+  const now = Date.now();
+  let best = null, bestDiff = Infinity;
+  for (const r of fc.obsRecords) {
+    const t = new Date(r.forecast_time).getTime();
+    const diff = Math.abs(t - now);
+    if (diff < bestDiff) { bestDiff = diff; best = r.forecast_time; }
+  }
+  return best ? best.slice(0, 19) + "Z" : new Date().toISOString().slice(0, 19) + "Z";
 }
 
 function fmtLead(lead) {
@@ -713,7 +727,7 @@ function renderForecastView() {
 }
 
 function renderForecastTable(wrap, data, param) {
-  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + fc.target.toISOString().slice(0, 19) + "Z");
+  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + closestObsTime());
   const obsWithValue = fc.observations.filter((obs) => obs.values[param.key]);
   const thead = h("thead", {},
     h("tr", {},
@@ -725,13 +739,17 @@ function renderForecastTable(wrap, data, param) {
   const cells = data.series.map((s) => {
     const byLead = new Map();
     for (const point of s.points) {
-      if (!byLead.has(point.lead)) byLead.set(point.lead, []);
-      byLead.get(point.lead).push(point);
+      const roundedLead = Math.round(point.lead);
+      if (!byLead.has(roundedLead)) byLead.set(roundedLead, []);
+      byLead.get(roundedLead).push(point);
     }
     return byLead;
   });
-  const rows = data.leads.map((lead) => h("tr", {},
-    h("th", { class: "fc-time", scope: "row" }, fmtLead(lead)),
+  const roundedLeads = [...new Set(
+    data.series.flatMap((s) => s.points.map((p) => Math.round(p.lead)))
+  )].sort((a, b) => b - a);
+  const rows = roundedLeads.map((lead) => h("tr", {},
+    h("th", { class: "fc-time", scope: "row" }, String(lead)),
     ...cells.map((byLead) => {
       const points = byLead.get(lead) || [];
       if (!points.length) return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
@@ -879,7 +897,7 @@ function renderForecastChart(wrap, data, param) {
   );
 
   const partial = series.some((s) => s.points.some((p) => p.values[param.key]?.partial));
-  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + fc.target.toISOString().slice(0, 19) + "Z");
+  const ftLabel = h("p", { class: "fc-time-heading" }, "Forecast time: " + closestObsTime());
   wrap.replaceChildren(ftLabel, svg, legend, detail, ...(partial ? [
     h("p", { class: "fc-coverage partial" },
       "Partial coverage: outlined points use fewer than 24 hours of available values. Focus or hover a point for coverage and poll details."),
