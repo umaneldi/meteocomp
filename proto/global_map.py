@@ -52,6 +52,8 @@ def poll_weatherapi():
         json.dump(dat, f, indent=4)
 
     ret_forecast = None
+    polled_at=datetime.now()    
+    dat["forecast"]["forecastday"]
     for d in dat["forecast"]["forecastday"]:
         for c in d["hour"]:
             forecast: Reading = Reading(
@@ -73,9 +75,9 @@ def poll_weatherapi():
                 visibility_km=c["vis_km"],
                 condition=c["condition"]["text"],
                 condition_text=c["condition"]["text"],
-                polled_at=datetime.now(),
+                polled_at=polled_at,
                 lead_time_hours=(
-                    datetime.fromisoformat(c["time"]) - datetime.now()
+                    datetime.fromisoformat(c["time"]) - polled_at
                 ).total_seconds()
                 / 3600,
                 kind="forecast",
@@ -100,6 +102,7 @@ def poll_openweathermap():
         json.dump(dat, f, indent=4)
 
     ret_forecast = None
+    polled_at=datetime.now()    
     for c in dat["list"]:
         forecast = Reading(
             provider="owm",
@@ -107,7 +110,7 @@ def poll_openweathermap():
             location_name="castanet-tolosan",
             forecast_time=datetime.fromisoformat(c["dt_txt"]),
             lead_time_hours=(
-                datetime.fromisoformat(c["dt_txt"]) - datetime.now()
+                datetime.fromisoformat(c["dt_txt"]) - polled_at
             ).total_seconds()
             / 3600,
             kind="forecast",
@@ -139,7 +142,7 @@ def poll_openweathermap():
                 if c.get("weather") and c["weather"][0]["description"]
                 else ""
             ),
-            polled_at=datetime.now(),
+            polled_at=polled_at,
         )
         ret_forecast = forecast
 
@@ -164,6 +167,7 @@ def poll_infoclimat():
         json.dump(dat, f, indent=4)
 
     ret_forecast = None
+    polled_at = datetime.now()
     for c in dat["hourly"]["000PU"]:
         forecast = Reading(
             provider="infoclimat",
@@ -171,7 +175,7 @@ def poll_infoclimat():
             location_name="castanet-tolosan",
             forecast_time=datetime.fromisoformat(c["dh_utc"]),
             lead_time_hours=(
-                datetime.fromisoformat(c["dh_utc"]) - datetime.now()
+                datetime.fromisoformat(c["dh_utc"]) - polled_at
             ).total_seconds()
             / 3600,
             kind="observation",
@@ -199,7 +203,7 @@ def poll_infoclimat():
             ),
             condition="",
             condition_text="",
-            polled_at=datetime.now(),
+            polled_at=polled_at,
         )
         ret_forecast = forecast
 
