@@ -211,6 +211,7 @@ input::placeholder { color: var(--ink-3); }
 .card-body { display: grid; gap: .9rem; margin-top: 1rem; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
 .card-body .key { grid-column: 1 / -1; }
 .card-warn { margin: .8rem 0 0; color: var(--err); font-size: .85rem; }
+.card-status { margin: .6rem 0 0; }
 
 .key-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .key-row input { flex: 1; min-width: 14rem; font-family: var(--mono); }

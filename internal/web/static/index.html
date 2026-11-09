@@ -28,7 +28,6 @@
   <nav class="tabbar" role="tablist" aria-label="Views">
     <div class="wrap tabbar-inner">
       <button type="button" role="tab" id="tab-forecast" aria-selected="true">Forecast</button>
-      <button type="button" role="tab" id="tab-activity" aria-selected="false">Activity</button>
       <button type="button" role="tab" id="tab-settings" aria-selected="false">Settings</button>
     </div>
   </nav>
@@ -97,6 +96,7 @@
           <h2>Providers</h2>
           <p class="hint">Instances of a provider type. Add the same type several times to compare endpoints or keys. API keys are write-only: they are never sent back to the browser.</p>
         </div>
+        <button type="button" class="btn" id="poll-all">Poll all now</button>
       </header>
       <div class="cards" id="provider-cards"></div>
       <button type="button" class="btn ghost" id="add-provider">Add provider</button>
@@ -121,25 +121,6 @@
       <p class="hint small" id="import-status" hidden></p>
     </section>
 
-    <section id="activity" class="panel" hidden>
-      <header class="panel-head">
-        <span class="panel-index">04</span>
-        <div>
-          <h2>Recent readings</h2>
-          <p class="hint">Latest weather data, refreshed automatically. Fetch failures are available in the server logs.</p>
-        </div>
-        <button type="button" class="btn" id="poll-all">Poll all now</button>
-      </header>
-      <div class="table-wrap">
-        <table class="grid compact">
-          <thead>
-            <tr><th>Retrieved</th><th>Provider</th><th>Location</th><th>Kind</th><th>Forecast time (UTC)</th><th class="num">Temperature</th></tr>
-          </thead>
-          <tbody id="readings-body"></tbody>
-        </table>
-      </div>
-      <p class="empty" id="readings-empty" hidden>No readings recorded yet.</p>
-    </section>
     <section id="forecast" class="panel" hidden>
       <header class="panel-head">
         <span class="panel-index">05</span>

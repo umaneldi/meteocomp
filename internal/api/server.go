@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	mux.HandleFunc("GET /api/v1/locations", s.listLocations)
 	mux.HandleFunc("POST /api/v1/polls", s.triggerPoll)
+	mux.HandleFunc("GET /api/v1/poll-status", s.pollStatus)
 	mux.HandleFunc("GET /api/v1/readings", s.listReadings)
 	mux.HandleFunc("GET /api/v1/stations", s.listStations)
 	return mux
@@ -112,6 +114,31 @@ func (s *Server) triggerPoll(w http.ResponseWriter, r *http.Request) {
 		pl.Trigger(s.baseCtx, p)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "started", "providers": names})
+}
+
+func (s *Server) pollStatus(w http.ResponseWriter, _ *http.Request) {
+	pl := s.pollers.Current()
+	if pl == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	type view struct {
+		Name     string     `json:"name"`
+		PolledAt *time.Time `json:"polled_at,omitempty"`
+		Error    string     `json:"error,omitempty"`
+		Polling  bool       `json:"polling"`
+	}
+	statuses := pl.Statuses()
+	out := make([]view, 0, len(statuses))
+	for name, ps := range statuses {
+		var polledAt *time.Time
+		if !ps.PolledAt.IsZero() {
+			polledAt = &ps.PolledAt
+		}
+		out = append(out, view{name, polledAt, ps.Error, ps.Polling})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {

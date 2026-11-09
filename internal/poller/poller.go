@@ -12,6 +12,13 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
+// PollStatus is the outcome of the most recent poll attempt for one provider.
+type PollStatus struct {
+	PolledAt time.Time `json:"polled_at"`
+	Error    string    `json:"error"`   // empty on success
+	Polling  bool      `json:"polling"` // true while a poll is in progress
+}
+
 // Poller runs one goroutine per provider, all sharing the same interval.
 type Poller struct {
 	providers []weather.Provider
@@ -25,15 +32,36 @@ type Poller struct {
 	mu map[string]*sync.Mutex
 	// triggered tracks polls started by Trigger so Run can wait for them on shutdown.
 	triggered sync.WaitGroup
+
+	statusMu sync.RWMutex
+	status   map[string]PollStatus
 }
 
 func New(provs []weather.Provider, interval time.Duration, locations []weather.Location, st store.Store, log *slog.Logger) *Poller {
 	mu := make(map[string]*sync.Mutex, len(provs))
+	status := make(map[string]PollStatus, len(provs))
 	for _, p := range provs {
 		mu[p.Name()] = &sync.Mutex{}
 	}
 	return &Poller{providers: provs, interval: interval, locations: locations, store: st, log: log,
-		timeout: time.Minute, mu: mu}
+		timeout: time.Minute, mu: mu, status: status}
+}
+
+func (p *Poller) setStatus(name string, s PollStatus) {
+	p.statusMu.Lock()
+	p.status[name] = s
+	p.statusMu.Unlock()
+}
+
+// Statuses returns a snapshot of the last poll outcome for every provider.
+func (p *Poller) Statuses() map[string]PollStatus {
+	p.statusMu.RLock()
+	defer p.statusMu.RUnlock()
+	out := make(map[string]PollStatus, len(p.status))
+	for k, v := range p.status {
+		out[k] = v
+	}
+	return out
 }
 
 // Reason tells why a provider poll was started. It is included in logs.
@@ -121,13 +149,17 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 	m.Lock()
 	defer m.Unlock()
 
+	p.setStatus(prov.Name(), PollStatus{Polling: true})
+
 	plog := p.log.With("provider", prov.Name(), "provider_type", prov.Type(), "reason", reason)
 	plog.Info("provider poll started", "locations", len(p.locations))
 	start := time.Now()
 	attempted, forecasts := 0, 0
+	var firstErr string
 	defer func() {
 		plog.Info("provider poll finished", "locations_ok", attempted-failures, "locations_failed", failures,
 			"locations_skipped", len(p.locations)-attempted, "forecasts", forecasts, "duration", time.Since(start))
+		p.setStatus(prov.Name(), PollStatus{PolledAt: time.Now().UTC(), Error: firstErr})
 	}()
 
 	if bp, ok := prov.(weather.BatchProvider); ok {
@@ -156,6 +188,9 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 			log := plog.With("location", loc.Name)
 			if res.Err != nil {
 				failures++
+				if firstErr == "" {
+					firstErr = res.Err.Error()
+				}
 				log.Warn("location poll failed", "error", res.Err, "duration", batchEnd.Sub(batchStart))
 			} else {
 				forecasts += len(res.Forecasts)
@@ -180,6 +215,9 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 		log := plog.With("location", loc.Name)
 		if res.Err != nil {
 			failures++
+			if firstErr == "" {
+				firstErr = res.Err.Error()
+			}
 			log.Warn("location poll failed", "error", res.Err, "duration", res.FinishedAt.Sub(res.StartedAt))
 		} else {
 			forecasts += len(res.Forecasts)
@@ -206,6 +244,9 @@ type fetchResult struct {
 func (p *Poller) record(ctx context.Context, result fetchResult) error {
 	readings := make([]store.ReadingRecord, 0, len(result.Forecasts))
 	for _, forecast := range result.Forecasts {
+		if forecast.Kind == weather.KindForecast && forecast.ForecastTime.Before(result.StartedAt) {
+			continue
+		}
 		readings = append(readings, store.ReadingRecord{
 			Provider: result.Provider, ProviderType: result.ProviderType,
 			LocationName: result.Location.Name, PolledAt: result.StartedAt,

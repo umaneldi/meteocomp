@@ -7,8 +7,9 @@ config.yaml
 *.db-wal
 .env
 .venv/
-check.py
+*.py
 meteocomp.json
 *.bak
 *.json
 *.txt
+meteocomp-settings.yaml

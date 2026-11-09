@@ -15,12 +15,12 @@ const state = {
   lastDoc: null,  // last settings document received from the server
   baseline: "",   // serialized settings matching lastDoc, for dirty tracking
   saving: false,
+  pollStatus: new Map(), // name → { polling, ok, error } updated after polls
 };
 let uid = 0;
 
 const TABS = {
   forecast: ["forecast"],
-  activity: ["activity"],
   settings: ["polling", "locations", "providers", "transfer"],
 };
 let currentTab = "forecast";
@@ -449,8 +449,19 @@ function providerCard(p) {
   const warn = p.enabled && info.requires_api_key && !keyAfterSave(p)
     ? h("p", { class: "card-warn" }, "Enabled but no API key — add one or disable this provider.") : null;
 
+  let statusEl = null;
+  if (p.orig && state.pollStatus.has(p.orig)) {
+    const ps = state.pollStatus.get(p.orig);
+    const cls = ps.polling ? "" : (ps.error ? " error" : " ok");
+    statusEl = h("div", { class: "card-status" },
+      h("span", { class: "status" + cls },
+        ps.polling ? "Polling…" : (ps.error ? "Failed" : "OK"),
+        ps.error ? h("span", { class: "poll-error" }, ps.error) : null));
+  }
+
   return h("article", { class: "card" + (p.enabled ? " on" : ""), "aria-label": `Provider ${p.name}` },
     top,
+    statusEl,
     h("p", { class: "card-desc" }, info.description),
     body.childElementCount ? body : null,
     warn);
@@ -519,35 +530,47 @@ function addProvider() {
   $("provider-cards").lastElementChild?.querySelector("input")?.focus();
 }
 
-// ── Activity ──────────────────────────────────────────────────────────────
-async function refreshReadings() {
-  try {
-    const readings = await api("GET", "/api/v1/readings?limit=25");
-    $("readings-body").replaceChildren(...readings.map((r) => h("tr", {},
-      h("td", {}, h("span", { class: "when", title: r.polled_at }, relTime(r.polled_at))),
-      h("td", { class: "mono" }, r.provider),
-      h("td", { class: "mono" }, r.location_name),
-      h("td", {}, r.kind),
-      h("td", {}, r.forecast_time),
-      h("td", { class: "num" }, fmtParamValue(r.temperature_c, PARAMS[0])))));
-    $("readings-empty").hidden = readings.length > 0;
-    $("readings-empty").textContent = "No readings recorded yet.";
-  } catch (e) {
-    $("readings-empty").hidden = false;
-    $("readings-empty").textContent = `Could not load readings: ${e.message}`;
-  }
-}
-
+// ── Polls ─────────────────────────────────────────────────────────────────
 async function pollNow(provider) {
   try {
     const q = provider ? `?provider=${encodeURIComponent(provider)}` : "";
     const res = await api("POST", `/api/v1/polls${q}`);
-    toast(res.providers.length ? `Polling ${res.providers.join(", ")}…` : "No enabled provider to poll.");
-    setTimeout(refreshReadings, 2500);
-    setTimeout(refreshReadings, 8000);
+    if (!res.providers.length) { toast("No enabled provider to poll."); return; }
+    toast(`Polling ${res.providers.join(", ")}…`);
+    const startedAt = new Date();
+    for (const name of res.providers) state.pollStatus.set(name, { polling: true });
+    renderProviders();
+    checkPollStatus(startedAt, res.providers);
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+async function checkPollStatus(startedAt, names) {
+  const nameSet = new Set(names);
+  const deadline = Date.now() + 60000;
+  async function tick() {
+    try {
+      const statuses = await api("GET", "/api/v1/poll-status");
+      let pending = false;
+      for (const s of statuses) {
+        if (!nameSet.has(s.name)) continue;
+        const updatedAfter = s.polled_at && new Date(s.polled_at) >= startedAt;
+        if (s.polling) {
+          state.pollStatus.set(s.name, { polling: true });
+          pending = true;
+        } else if (updatedAfter) {
+          state.pollStatus.set(s.name, s.error ? { error: s.error } : { ok: true });
+        } else {
+          state.pollStatus.set(s.name, { polling: true });
+          pending = true;
+        }
+      }
+      renderProviders();
+      if (pending && Date.now() < deadline) setTimeout(tick, 2000);
+    } catch { /* ignore transient errors */ }
+  }
+  tick();
 }
 
 // ── Save / discard ────────────────────────────────────────────────────────
@@ -1026,8 +1049,6 @@ async function boot() {
     if (JSON.stringify(serialize()) !== state.baseline) e.preventDefault();
   });
 
-  refreshReadings();
-  setInterval(refreshReadings, 15000);
 }
 
 boot();
