@@ -102,6 +102,25 @@
       <button type="button" class="btn ghost" id="add-provider">Add provider</button>
     </section>
 
+    <section id="transfer" class="panel" hidden>
+      <header class="panel-head">
+        <span class="panel-index">04</span>
+        <div>
+          <h2>Import / Export</h2>
+          <p class="hint">Export settings to a YAML file for backup or migration. Importing applies and saves immediately — API keys in the file are stored.</p>
+        </div>
+      </header>
+      <div class="transfer-row">
+        <button type="button" class="btn ghost" id="export-settings">Export settings</button>
+        <label class="btn ghost" id="import-label" tabindex="0" role="button"
+               onkeydown="if(event.key==='Enter'||event.key===' '){document.getElementById('import-file').click()}">
+          Import settings…
+          <input type="file" id="import-file" accept=".yaml,.yml" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
+        </label>
+      </div>
+      <p class="hint small" id="import-status" hidden></p>
+    </section>
+
     <section id="activity" class="panel" hidden>
       <header class="panel-head">
         <span class="panel-index">04</span>

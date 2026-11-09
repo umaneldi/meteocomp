@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -174,4 +175,39 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listProviderTypes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, providers.Infos())
+}
+
+func (s *Server) exportSettings(w http.ResponseWriter, _ *http.Request) {
+	out, err := config.MarshalYAML(s.Settings())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Header().Set("Content-Disposition", `attachment; filename="meteocomp-settings.yaml"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
+}
+
+func (s *Server) importSettings(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
+		return
+	}
+	cfg, err := config.Parse(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.ApplySettings(r.Context(), cfg.Settings, true, true); err != nil {
+		if errors.As(err, new(InvalidSettingsError)) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		s.internalError(w, err)
+		return
+	}
+	s.log.Info("settings imported", "poll_interval", cfg.PollInterval, "locations", len(cfg.Locations), "providers", len(cfg.Providers))
+	s.getSettings(w, r)
 }

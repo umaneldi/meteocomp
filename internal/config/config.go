@@ -164,6 +164,23 @@ func (s *Settings) Normalize() {
 	}
 }
 
+// MarshalYAML serializes settings to YAML. PollInterval is written as a human-readable
+// duration string so the output can be re-imported by Parse.
+func MarshalYAML(s Settings) ([]byte, error) {
+	type export struct {
+		PollInterval string             `yaml:"poll_interval"`
+		ForecastDays int                `yaml:"forecast_days"`
+		Locations    []weather.Location `yaml:"locations"`
+		Providers    []ProviderConfig   `yaml:"providers"`
+	}
+	return yaml.Marshal(export{
+		PollInterval: s.PollInterval.String(),
+		ForecastDays: s.ForecastDays,
+		Locations:    s.Locations,
+		Providers:    s.Providers,
+	})
+}
+
 // Validate checks the settings. Errors are prefixed with "config:".
 func (s *Settings) Validate() error {
 	if s.PollInterval < MinPollInterval {

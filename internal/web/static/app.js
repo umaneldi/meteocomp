@@ -21,7 +21,7 @@ let uid = 0;
 const TABS = {
   forecast: ["forecast"],
   activity: ["activity"],
-  settings: ["polling", "locations", "providers"],
+  settings: ["polling", "locations", "providers", "transfer"],
 };
 let currentTab = "forecast";
 
@@ -973,6 +973,50 @@ async function boot() {
     state.forecastDays = Number.isNaN(v) ? e.target.value : v;
     updateDirty();
   });
+  $("export-settings").addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/v1/settings/export");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `${res.status} ${res.statusText}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "meteocomp-settings.yaml";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+
+  $("import-file").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const status = $("import-status");
+    status.hidden = false;
+    status.textContent = `Importing ${file.name}…`;
+    try {
+      const text = await file.text();
+      const res = await fetch("/api/v1/settings/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/yaml" },
+        body: text,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+      loadDoc(data);
+      renderAll();
+      updateDirty();
+      status.hidden = true;
+      toast("Settings imported and saved.");
+    } catch (e) {
+      status.textContent = `Import failed: ${e.message}`;
+      toast(`Import failed: ${e.message}`, true);
+    } finally {
+      e.target.value = "";
+    }
+  });
+
   $("add-location").addEventListener("click", () => {
     addLocation({});
     $("locations-body").lastElementChild?.querySelector("input")?.focus();

@@ -48,6 +48,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/version", s.getVersion)
 	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/v1/settings", s.putSettings)
+	mux.HandleFunc("GET /api/v1/settings/export", s.exportSettings)
+	mux.HandleFunc("POST /api/v1/settings/import", s.importSettings)
 	mux.HandleFunc("GET /api/v1/provider-types", s.listProviderTypes)
 	mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	mux.HandleFunc("GET /api/v1/locations", s.listLocations)

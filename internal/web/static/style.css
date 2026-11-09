@@ -138,6 +138,9 @@ input::placeholder { color: var(--ink-3); }
 }
 .icon-btn:hover, .btn.danger-link:hover { color: var(--err); background: var(--err-soft); }
 
+/* ── Transfer ─────────────────────────────────────────────── */
+.transfer-row { display: flex; gap: .75rem; flex-wrap: wrap; }
+
 /* ── Interval ─────────────────────────────────────────────── */
 .interval-row { display: flex; gap: 1.25rem; align-items: flex-end; flex-wrap: wrap; }
 .presets { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; }
