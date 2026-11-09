@@ -5,15 +5,17 @@ import requests
 from pydantic import BaseModel
 
 
-class Forecast(BaseModel):  # type: ignore
-    provider: str  # TEXT    NOT NULL,
-    provider_type: str  # TEXT    NOT NULL,
+class Forecast(BaseModel):
+    provider: str
+    provider_type: str  # Identification of the provider type (e.g., "weatherapi", "openweathermap") to use the right API call
 
-    location_name: str  # TEXT    NOT NULL,
+    location_name: (
+        str  # Name of the location, linked to the locations table (column name)
+    )
 
-    forecast_time: datetime  # TEXT    NOT NULL,  -- UTC start of the covered period
-    lead_time_hours: float  # REAL    NOT NULL,  -- forecast_time - polled_at (negative for observations)
-    kind: str  # TEXT    NOT NULL CHECK (kind IN ('forecast', 'observation')) DEFAULT 'forecast',
+    forecast_time: datetime  # UTC datetime of the forecast
+    lead_time_hours: float  # forecast_time - polled_at (negative for observations)
+    kind: str  # Type of the forecast (e.g., "forecast", "observation")
 
     temperature_c: float
     feels_like_c: float
@@ -28,12 +30,10 @@ class Forecast(BaseModel):  # type: ignore
     snowfall_cm: float
     visibility_km: float
 
-    condition: str  # TEXT    NOT NULL,  -- normalized, see weather.Condition
-    condition_text: str  # TEXT,              -- raw provider description
+    condition: str
+    condition_text: str
 
-    created_at: (
-        datetime  # TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-    )
+    polled_at: datetime  # UTC timestamp when the forecast was created
 
 
 def poll_weatherapi():
@@ -73,7 +73,7 @@ def poll_weatherapi():
                 visibility_km=c["vis_km"],
                 condition=c["condition"]["text"],
                 condition_text=c["condition"]["text"],
-                created_at=datetime.now(),
+                polled_at=datetime.now(),
                 lead_time_hours=(
                     datetime.fromisoformat(c["time"]) - datetime.now()
                 ).total_seconds()
@@ -139,7 +139,7 @@ def poll_openweathermap():
                 if c.get("weather") and c["weather"][0]["description"]
                 else ""
             ),
-            created_at=datetime.now(),
+            polled_at=datetime.now(),
         )
         ret_forecast = forecast
 
@@ -199,7 +199,7 @@ def poll_infoclimat():
             ),
             condition="",
             condition_text="",
-            created_at=datetime.now(),
+            polled_at=datetime.now(),
         )
         ret_forecast = forecast
 
@@ -275,7 +275,7 @@ def poll_openmeteo():
             visibility_km=-99999.0,
             condition="",
             condition_text="",
-            created_at=datetime.now(),
+            polled_at=datetime.now(),
         )
         ret_forecast = forecast
 
