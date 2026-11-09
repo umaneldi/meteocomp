@@ -115,6 +115,8 @@ input:hover, select:hover { border-color: var(--ink-3); }
 input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; border-color: transparent; }
 input.mono, .mono { font-family: var(--mono); font-size: .88rem; }
 input[aria-invalid=true] { border-color: var(--err); background: var(--err-soft); }
+input[readonly] { background: var(--paper); color: var(--ink-2); border-color: var(--rule); cursor: default; }
+input[readonly]:hover { border-color: var(--rule); }
 input::placeholder { color: var(--ink-3); }
 
 .btn {

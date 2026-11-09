@@ -272,19 +272,18 @@ function renderLocations(freshId) {
     const bind = (key, extra = {}) => h("input", {
       type: "text", value: l[key] ?? "", spellcheck: "false", autocomplete: "off",
       "aria-label": `${key} of ${l.name || "location"}`, ...extra,
-      oninput: (e) => { l[key] = e.target.value; checkCoord(e.target, key); updateDirty(); },
+      oninput: (e) => { l[key] = e.target.value; updateDirty(); },
     });
-    const coord = (key, max) => {
-      const el = bind(key, { type: "number", step: "any", min: -max, max, class: "coord" });
-      checkCoord(el, key);
-      return el;
-    };
+    const ro = (key, extra = {}) => h("input", {
+      type: "text", value: l[key] ?? "", readonly: true, tabindex: "-1",
+      "aria-label": `${key} of ${l.name || "location"}`, ...extra,
+    });
     return h("tr", { class: l._id === freshId ? "fresh" : null },
       h("td", {}, bind("name", { class: "mono", placeholder: "paris" })),
-      h("td", {}, bind("city", { placeholder: "Paris" })),
-      h("td", {}, bind("country", { class: "cc", maxlength: "2", placeholder: "FR" })),
-      h("td", { class: "num" }, coord("latitude", 90)),
-      h("td", { class: "num" }, coord("longitude", 180)),
+      h("td", {}, ro("city", { placeholder: "Paris" })),
+      h("td", {}, ro("country", { class: "cc mono" })),
+      h("td", { class: "num" }, ro("latitude", { type: "number", class: "coord" })),
+      h("td", { class: "num" }, ro("longitude", { type: "number", class: "coord" })),
       h("td", {}, bind("station_id", { class: "mono", placeholder: "000PU" })),
       h("td", { class: "num" }, h("button", {
         type: "button", class: "icon-btn", title: "Remove location", "aria-label": `Remove ${l.name}`,
@@ -294,11 +293,6 @@ function renderLocations(freshId) {
   }));
   $("locations-empty").hidden = state.locations.length > 0;
   $("locations-table").hidden = state.locations.length === 0;
-}
-
-function checkCoord(el, key) {
-  if (key !== "latitude" && key !== "longitude") return;
-  el.setAttribute("aria-invalid", String(!validCoord(el.value, key === "latitude" ? 90 : 180)));
 }
 
 function addLocation(loc) {
