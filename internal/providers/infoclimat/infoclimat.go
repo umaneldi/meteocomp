@@ -29,13 +29,13 @@ const (
 
 func init() {
 	providers.Register(Type, New, providers.Info{
-		Description:    "Infoclimat hourly weather station observations. Requires a token. Each location must have a station_id configured.",
+		Description:    "Infoclimat weather station observations. Requires a token. Each location must have a station_id configured.",
 		RequiresAPIKey: true,
 		SignupURL:      "https://www.infoclimat.fr/opendata/",
 	})
 }
 
-// Provider fetches hourly weather station observations from the Infoclimat opendata API.
+// Provider fetches weather station observations from the Infoclimat opendata API.
 // The station to query is taken from each location's StationID field, not from provider options.
 type Provider struct {
 	name     string
@@ -112,20 +112,17 @@ func (f *flexFloat) UnmarshalJSON(b []byte) error {
 // rawReading holds one observation record. All measurement fields are nullable.
 // Wind speeds are already in km/h; visibility is in meters.
 type rawReading struct {
-	DhUTC          string    `json:"dh_utc"`
-	Temperature    flexFloat `json:"temperature"`     // °C
-	TemperatureMin flexFloat `json:"temperature_min"` // °C
-	TemperatureMax flexFloat `json:"temperature_max"` // °C
-	Humidite       flexFloat `json:"humidite"`        // %
-	PointDeRosee   flexFloat `json:"point_de_rosee"`  // °C
-	Pression       flexFloat `json:"pression"`        // hPa
-	VentMoyen      flexFloat `json:"vent_moyen"`      // km/h
-	VentRafales    flexFloat `json:"vent_rafales"`    // km/h
-	VentDirection  flexFloat `json:"vent_direction"`  // degrees
-	Pluie1h        flexFloat `json:"pluie_1h"`        // mm
-	Visibilite     flexFloat `json:"visibilite"`      // meters
-	TempsOmm       flexFloat `json:"temps_omm"`       // WMO present weather code
-	UVIndex        flexFloat `json:"uv_index"`
+	DhUTC         string    `json:"dh_utc"`
+	Temperature   flexFloat `json:"temperature"`        // °C
+	FeelsLike     flexFloat `json:"feels_like"`         // °C
+	Humidite      flexFloat `json:"humidite"`           // %
+	PointDeRosee  flexFloat `json:"point_de_rosee"`     // °C
+	Pression      flexFloat `json:"pression"`           // hPa
+	VentMoyen     flexFloat `json:"vent_moyen"`         // km/h
+	VentRafales   flexFloat `json:"vent_rafales_10min"` // km/h
+	VentDirection flexFloat `json:"vent_direction"`     // degrees
+	Visibilite    flexFloat `json:"visibilite"`         // meters
+	TempsOmm      flexFloat `json:"temps_omm"`          // WMO present weather code
 }
 
 // Fetch satisfies weather.Provider by delegating to FetchAll.
@@ -211,25 +208,17 @@ func (p *Provider) parseReadings(now time.Time, stationReadings []rawReading) ([
 		if !t.Before(now) {
 			continue
 		}
-		// Keep only top-of-hour readings to align with hourly forecast granularity.
-		if t.Minute() != 0 {
-			continue
-		}
 		f := weather.Forecast{
 			Kind:             weather.KindObservation,
 			ForecastTime:     t,
-			Granularity:      weather.GranularityHourly,
 			TemperatureC:     rd.Temperature.v,
-			TemperatureMinC:  rd.TemperatureMin.v,
-			TemperatureMaxC:  rd.TemperatureMax.v,
+			FeelsLikeC:       rd.FeelsLike.v,
 			HumidityPct:      rd.Humidite.v,
+			DewPointC:        rd.PointDeRosee.v,
 			PressureHPa:      rd.Pression.v,
 			WindSpeedKmh:     rd.VentMoyen.v,
 			WindGustKmh:      rd.VentRafales.v,
 			WindDirectionDeg: rd.VentDirection.v,
-			PrecipitationMm:  rd.Pluie1h.v,
-			DewPointC:        rd.PointDeRosee.v,
-			UVIndex:          rd.UVIndex.v,
 		}
 		if rd.Visibilite.v != nil {
 			v := *rd.Visibilite.v / 1000.0
@@ -247,7 +236,6 @@ func setCondition(f *weather.Forecast, ww *float64) {
 		return
 	}
 	code := int(*ww)
-	f.ConditionCode = strconv.Itoa(code)
 	f.Condition, f.ConditionText = wmoSynoptic(code)
 }
 

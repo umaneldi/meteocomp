@@ -24,7 +24,7 @@ const (
 
 func init() {
 	providers.Register(Type, New, providers.Info{
-		Description:    "WeatherAPI.com hourly and daily forecast.",
+		Description:    "WeatherAPI.com hourly forecast.",
 		RequiresAPIKey: true,
 		APIKeyEnv:      "WEATHER_API_KEY",
 		SignupURL:      "https://www.weatherapi.com/my/",
@@ -62,21 +62,6 @@ type cond struct {
 type response struct {
 	Forecast struct {
 		ForecastDay []struct {
-			Date string `json:"date"`
-			Day  struct {
-				MaxTempC          *float64 `json:"maxtemp_c"`
-				MinTempC          *float64 `json:"mintemp_c"`
-				AvgTempC          *float64 `json:"avgtemp_c"`
-				MaxWindKph        *float64 `json:"maxwind_kph"`
-				TotalPrecipMm     *float64 `json:"totalprecip_mm"`
-				TotalSnowCm       *float64 `json:"totalsnow_cm"`
-				AvgVisKm          *float64 `json:"avgvis_km"`
-				AvgHumidity       *float64 `json:"avghumidity"`
-				DailyChanceOfRain *float64 `json:"daily_chance_of_rain"`
-				DailyChanceOfSnow *float64 `json:"daily_chance_of_snow"`
-				Condition         cond     `json:"condition"`
-				UV                *float64 `json:"uv"`
-			} `json:"day"`
 			Hour []struct {
 				TimeEpoch    int64    `json:"time_epoch"`
 				TempC        *float64 `json:"temp_c"`
@@ -84,7 +69,6 @@ type response struct {
 				WindKph      *float64 `json:"wind_kph"`
 				WindDegree   *float64 `json:"wind_degree"`
 				PressureMb   *float64 `json:"pressure_mb"`
-				PrecipMm     *float64 `json:"precip_mm"`
 				SnowCm       *float64 `json:"snow_cm"`
 				Humidity     *float64 `json:"humidity"`
 				Cloud        *float64 `json:"cloud"`
@@ -93,8 +77,6 @@ type response struct {
 				VisKm        *float64 `json:"vis_km"`
 				GustKph      *float64 `json:"gust_kph"`
 				ChanceOfRain *float64 `json:"chance_of_rain"`
-				ChanceOfSnow *float64 `json:"chance_of_snow"`
-				UV           *float64 `json:"uv"`
 			} `json:"hour"`
 		} `json:"forecastday"`
 	} `json:"forecast"`
@@ -117,8 +99,8 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 	for _, fd := range r.Forecast.ForecastDay {
 		for _, h := range fd.Hour {
 			f := weather.Forecast{
+				Kind:                        weather.KindForecast,
 				ForecastTime:                time.Unix(h.TimeEpoch, 0).UTC(),
-				Granularity:                 weather.GranularityHourly,
 				TemperatureC:                h.TempC,
 				FeelsLikeC:                  h.FeelsLikeC,
 				HumidityPct:                 h.Humidity,
@@ -128,53 +110,15 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 				WindGustKmh:                 h.GustKph,
 				WindDirectionDeg:            h.WindDegree,
 				CloudCoverPct:               h.Cloud,
-				PrecipitationMm:             h.PrecipMm,
-				PrecipitationProbabilityPct: maxPtr(h.ChanceOfRain, h.ChanceOfSnow),
+				PrecipitationProbabilityPct: h.ChanceOfRain,
 				SnowfallCm:                  h.SnowCm,
-				UVIndex:                     h.UV,
 				VisibilityKm:                h.VisKm,
 			}
 			setCondition(&f, h.Condition)
 			out = append(out, f)
 		}
-
-		// The date is local to the location; it is stored as midnight UTC of that
-		// calendar day, consistent with other daily providers.
-		t, err := time.Parse("2006-01-02", fd.Date)
-		if err != nil {
-			return nil, fmt.Errorf("parse date %q: %w", fd.Date, err)
-		}
-		d := fd.Day
-		f := weather.Forecast{
-			ForecastTime:                t.UTC(),
-			Granularity:                 weather.GranularityDaily,
-			TemperatureC:                d.AvgTempC,
-			TemperatureMinC:             d.MinTempC,
-			TemperatureMaxC:             d.MaxTempC,
-			HumidityPct:                 d.AvgHumidity,
-			WindSpeedKmh:                d.MaxWindKph,
-			PrecipitationMm:             d.TotalPrecipMm,
-			PrecipitationProbabilityPct: maxPtr(d.DailyChanceOfRain, d.DailyChanceOfSnow),
-			SnowfallCm:                  d.TotalSnowCm,
-			UVIndex:                     d.UV,
-			VisibilityKm:                d.AvgVisKm,
-		}
-		setCondition(&f, d.Condition)
-		out = append(out, f)
 	}
 	return out, nil
-}
-
-func maxPtr(a, b *float64) *float64 {
-	switch {
-	case a == nil:
-		return b
-	case b == nil:
-		return a
-	case *b > *a:
-		return b
-	}
-	return a
 }
 
 func setCondition(f *weather.Forecast, c cond) {
@@ -183,7 +127,6 @@ func setCondition(f *weather.Forecast, c cond) {
 		f.Condition = weather.ConditionUnknown
 		return
 	}
-	f.ConditionCode = strconv.Itoa(c.Code)
 	f.Condition = condition(c.Code)
 }
 

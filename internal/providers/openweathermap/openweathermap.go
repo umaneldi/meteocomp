@@ -56,8 +56,6 @@ type response struct {
 		Main struct {
 			Temp      *float64 `json:"temp"`
 			FeelsLike *float64 `json:"feels_like"`
-			TempMin   *float64 `json:"temp_min"`
-			TempMax   *float64 `json:"temp_max"`
 			Pressure  *float64 `json:"pressure"`
 			Humidity  *float64 `json:"humidity"`
 		} `json:"main"`
@@ -73,14 +71,11 @@ type response struct {
 			Deg   *float64 `json:"deg"`
 			Gust  *float64 `json:"gust"`
 		} `json:"wind"`
+		Snow struct {
+			ThreeH *float64 `json:"3h"` // mm water equivalent
+		} `json:"snow"`
 		Visibility *float64 `json:"visibility"` // meters
 		Pop        *float64 `json:"pop"`        // 0..1
-		Rain       struct {
-			ThreeH *float64 `json:"3h"`
-		} `json:"rain"`
-		Snow struct {
-			ThreeH *float64 `json:"3h"`
-		} `json:"snow"`
 	} `json:"list"`
 }
 
@@ -99,11 +94,9 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 	out := make([]weather.Forecast, 0, len(r.List))
 	for _, e := range r.List {
 		f := weather.Forecast{
+			Kind:                        weather.KindForecast,
 			ForecastTime:                time.Unix(e.Dt, 0).UTC(),
-			Granularity:                 weather.GranularityThreeHours,
 			TemperatureC:                e.Main.Temp,
-			TemperatureMinC:             e.Main.TempMin,
-			TemperatureMaxC:             e.Main.TempMax,
 			FeelsLikeC:                  e.Main.FeelsLike,
 			HumidityPct:                 e.Main.Humidity,
 			PressureHPa:                 e.Main.Pressure,
@@ -113,17 +106,12 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			WindGustKmh:                 scale(e.Wind.Gust, 3.6),
 			VisibilityKm:                scale(e.Visibility, 0.001),
 			PrecipitationProbabilityPct: scale(e.Pop, 100),
-			Condition:                   weather.ConditionUnknown,
-		}
-		// rain.3h and snow.3h are both liquid-equivalent millimeters.
-		if e.Rain.ThreeH != nil || e.Snow.ThreeH != nil {
-			f.PrecipitationMm = new(deref(e.Rain.ThreeH) + deref(e.Snow.ThreeH))
-		} else {
-			f.PrecipitationMm = new(0.0)
+			// 1 mm water equivalent ≈ 1 cm of snow (standard 10:1 ratio).
+			SnowfallCm: e.Snow.ThreeH,
+			Condition:  weather.ConditionUnknown,
 		}
 		if len(e.Weather) > 0 {
 			w := e.Weather[0]
-			f.ConditionCode = strconv.Itoa(w.ID)
 			f.ConditionText = w.Description
 			f.Condition = condition(w.ID)
 		}
@@ -137,13 +125,6 @@ func scale(v *float64, k float64) *float64 {
 		return nil
 	}
 	return new(*v * k)
-}
-
-func deref(v *float64) float64 {
-	if v == nil {
-		return 0
-	}
-	return *v
 }
 
 // condition maps OpenWeatherMap condition IDs (https://openweathermap.org/weather-conditions).

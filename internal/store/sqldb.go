@@ -12,11 +12,9 @@ import (
 
 const timeLayout = "2006-01-02T15:04:05Z"
 
-func formatTime(t time.Time) string { return t.UTC().Format(timeLayout) }
-
+func formatTime(t time.Time) string         { return t.UTC().Format(timeLayout) }
 func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
-// SQLDB is a Store backed by a SQL database (SQLite or PostgreSQL).
 type SQLDB struct {
 	db *sql.DB
 	d  dialect
@@ -26,67 +24,53 @@ var _ Store = (*SQLDB)(nil)
 
 func (s *SQLDB) Close() error { return s.db.Close() }
 
-// readingColumns lists the non-id columns of the readings table, in insertion order.
-const readingColumns = `poll_id, polled_at, provider, provider_type,
-	location_name, city, country, latitude, longitude,
-	forecast_time, granularity, lead_time_hours, kind,
-	temperature_c, temperature_min_c, temperature_max_c, feels_like_c, humidity_pct, dew_point_c,
+const readingColumns = `provider, provider_type, location_name,
+	forecast_time, lead_time_hours, kind,
+	temperature_c, feels_like_c, humidity_pct, dew_point_c,
 	pressure_hpa, wind_speed_kmh, wind_gust_kmh, wind_direction_deg, cloud_cover_pct,
-	precipitation_mm, precipitation_probability_pct, snowfall_cm, uv_index, visibility_km,
-	condition, condition_code, condition_text`
+	precipitation_probability_pct, snowfall_cm, visibility_km,
+	condition, condition_text, polled_at`
 
-func (s *SQLDB) RecordPoll(ctx context.Context, r PollResult) (int64, error) {
+func (s *SQLDB) RecordReadings(ctx context.Context, readings []ReadingRecord) error {
+	if len(readings) == 0 {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer tx.Rollback()
-
-	status, errText := StatusOK, sql.NullString{}
-	if r.Err != nil {
-		status, errText = StatusError, sql.NullString{String: r.Err.Error(), Valid: true}
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(strings.Split(readingColumns, ","))), ", ")
+	stmt, err := tx.PrepareContext(ctx, s.d.rebind("INSERT INTO readings ("+readingColumns+") VALUES ("+placeholders+")"))
+	if err != nil {
+		return fmt.Errorf("prepare reading insert: %w", err)
 	}
-	var pollID int64
-	if err := tx.QueryRowContext(ctx, s.d.rebind(`INSERT INTO polls
-		(provider, provider_type, location_name, started_at, finished_at, duration_ms, status, error, reading_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`),
-		r.Provider, r.ProviderType, r.Location.Name, formatTime(r.StartedAt), formatTime(r.FinishedAt),
-		r.FinishedAt.Sub(r.StartedAt).Milliseconds(), status, errText, len(r.Forecasts)).Scan(&pollID); err != nil {
-		return 0, fmt.Errorf("insert poll: %w", err)
-	}
-
-	if len(r.Forecasts) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?, ", 32), ", ")
-		stmt, err := tx.PrepareContext(ctx, s.d.rebind("INSERT INTO readings ("+readingColumns+") VALUES ("+placeholders+")"))
-		if err != nil {
-			return 0, fmt.Errorf("prepare reading insert: %w", err)
+	defer stmt.Close()
+	for _, r := range readings {
+		if r.Provider == "" || r.ProviderType == "" || r.LocationName == "" ||
+			r.PolledAt.IsZero() || r.ForecastTime.IsZero() {
+			return fmt.Errorf("reading requires provider, provider_type, location_name, polled_at and forecast_time")
 		}
-		defer stmt.Close()
-		polledAt := formatTime(r.StartedAt)
-		l := r.Location
-		for _, f := range r.Forecasts {
-			lead := f.ForecastTime.Sub(r.StartedAt).Hours()
-			kind := string(f.Kind)
-			if kind == "" {
-				kind = string(weather.KindForecast)
-			}
-			if _, err := stmt.ExecContext(ctx,
-				pollID, polledAt, r.Provider, r.ProviderType,
-				l.Name, l.City, l.Country, l.Latitude, l.Longitude,
-				formatTime(f.ForecastTime), string(f.Granularity), lead, kind,
-				f.TemperatureC, f.TemperatureMinC, f.TemperatureMaxC, f.FeelsLikeC, f.HumidityPct, f.DewPointC,
-				f.PressureHPa, f.WindSpeedKmh, f.WindGustKmh, f.WindDirectionDeg, f.CloudCoverPct,
-				f.PrecipitationMm, f.PrecipitationProbabilityPct, f.SnowfallCm, f.UVIndex, f.VisibilityKm,
-				string(f.Condition), f.ConditionCode, f.ConditionText,
-			); err != nil {
-				return 0, fmt.Errorf("insert reading: %w", err)
-			}
+		if r.Kind != weather.KindForecast && r.Kind != weather.KindObservation {
+			return fmt.Errorf("invalid reading kind %q", r.Kind)
+		}
+		// Compute from the timestamps actually stored, so persisted lead times agree exactly.
+		polledAt := r.PolledAt.UTC().Truncate(time.Second)
+		forecastTime := r.ForecastTime.UTC().Truncate(time.Second)
+		if _, err := stmt.ExecContext(ctx,
+			r.Provider, r.ProviderType, r.LocationName,
+			formatTime(forecastTime), forecastTime.Sub(polledAt).Hours(), string(r.Kind),
+			r.TemperatureC, r.FeelsLikeC, r.HumidityPct, r.DewPointC,
+			r.PressureHPa, r.WindSpeedKmh, r.WindGustKmh, r.WindDirectionDeg, r.CloudCoverPct,
+			r.PrecipitationProbabilityPct, r.SnowfallCm, r.VisibilityKm,
+			string(r.Condition), r.ConditionText, formatTime(polledAt),
+		); err != nil {
+			return fmt.Errorf("insert reading: %w", err)
 		}
 	}
-	return pollID, tx.Commit()
+	return tx.Commit()
 }
 
-// where accumulates SQL conditions and their arguments.
 type where struct {
 	conds []string
 	args  []any
@@ -104,59 +88,30 @@ func (w *where) String() string {
 	return " WHERE " + strings.Join(w.conds, " AND ")
 }
 
-func (s *SQLDB) ListPolls(ctx context.Context, f PollFilter) ([]Poll, error) {
-	var w where
-	if f.Provider != "" {
-		w.add("provider = ?", f.Provider)
-	}
-	if f.Location != "" {
-		w.add("location_name = ?", f.Location)
-	}
-	if f.Status != "" {
-		w.add("status = ?", f.Status)
-	}
-	q := `SELECT id, provider, provider_type, location_name, started_at, finished_at, duration_ms,
-		status, COALESCE(error, ''), reading_count,
-		(SELECT ` + s.d.distinctKinds + ` FROM readings WHERE poll_id = polls.id) AS kinds
-		FROM polls` + w.String() + " ORDER BY started_at DESC, id DESC"
-	if f.Limit > 0 {
-		q += fmt.Sprintf(" LIMIT %d", f.Limit)
-	}
-	rows, err := s.db.QueryContext(ctx, s.d.rebind(q), w.args...)
+func (s *SQLDB) LastReadingTimes(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT provider, MAX(polled_at) FROM readings GROUP BY provider")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	out := []Poll{}
+	out := make(map[string]time.Time)
 	for rows.Next() {
-		var p Poll
-		var started, finished string
-		var kinds sql.NullString
-		if err := rows.Scan(&p.ID, &p.Provider, &p.ProviderType, &p.LocationName, &started, &finished,
-			&p.DurationMs, &p.Status, &p.Error, &p.ReadingCount, &kinds); err != nil {
+		var provider, timestamp string
+		if err := rows.Scan(&provider, &timestamp); err != nil {
 			return nil, err
 		}
-		if kinds.Valid && kinds.String != "" {
-			p.Kinds = strings.Split(kinds.String, ",")
-		}
-		if p.StartedAt, err = parseTime(started); err != nil {
+		t, err := parseTime(timestamp)
+		if err != nil {
 			return nil, err
 		}
-		if p.FinishedAt, err = parseTime(finished); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+		out[provider] = t
 	}
 	return out, rows.Err()
 }
 
 func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error) {
-	if f.Order != "" && f.Order != "id_desc" {
-		return nil, fmt.Errorf("unsupported readings order %q", f.Order)
-	}
-	if f.BeforeID < 0 || (f.BeforeID != 0 && f.Order != "id_desc") {
-		return nil, fmt.Errorf("before_id requires a positive cursor and order=id_desc")
+	if f.Offset < 0 || f.Limit < 0 || (f.Offset > 0 && f.Limit == 0) {
+		return nil, fmt.Errorf("readings require a non-negative limit and offset; offset requires a limit")
 	}
 	var w where
 	if f.Provider != "" {
@@ -164,9 +119,6 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	}
 	if f.Location != "" {
 		w.add("location_name = ?", f.Location)
-	}
-	if f.Granularity != "" {
-		w.add("granularity = ?", f.Granularity)
 	}
 	if f.Kind != "" {
 		w.add("kind = ?", f.Kind)
@@ -183,39 +135,27 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	if !f.PolledTo.IsZero() {
 		w.add("polled_at < ?", formatTime(f.PolledTo))
 	}
-	if f.PollID != 0 {
-		w.add("poll_id = ?", f.PollID)
-	}
-	if f.BeforeID != 0 {
-		w.add("id < ?", f.BeforeID)
-	}
-	order := "polled_at DESC, provider, location_name, granularity, forecast_time"
-	if f.Order == "id_desc" {
-		order = "id DESC"
-	}
-	q := "SELECT id, " + readingColumns + " FROM readings" + w.String() +
-		" ORDER BY " + order
+	// Include all fields in the ordering: rows tied on these values are identical.
+	q := "SELECT " + readingColumns + " FROM readings" + w.String() +
+		" ORDER BY polled_at DESC, " + strings.TrimSuffix(readingColumns, ", polled_at")
 	if f.Limit > 0 {
-		q += fmt.Sprintf(" LIMIT %d", f.Limit)
+		q += fmt.Sprintf(" LIMIT %d OFFSET %d", f.Limit, f.Offset)
 	}
 	rows, err := s.db.QueryContext(ctx, s.d.rebind(q), w.args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	out := []ReadingRecord{}
 	for rows.Next() {
 		var r ReadingRecord
-		var polledAt, forecastTime, granularity, kind, condition string
-		var city, country, code, text sql.NullString
-		if err := rows.Scan(&r.ID, &r.PollID, &polledAt, &r.Provider, &r.ProviderType,
-			&r.Location.Name, &city, &country, &r.Location.Latitude, &r.Location.Longitude,
-			&forecastTime, &granularity, &r.LeadTimeHours, &kind,
-			&r.TemperatureC, &r.TemperatureMinC, &r.TemperatureMaxC, &r.FeelsLikeC, &r.HumidityPct, &r.DewPointC,
+		var polledAt, forecastTime string
+		if err := rows.Scan(&r.Provider, &r.ProviderType, &r.LocationName,
+			&forecastTime, &r.LeadTimeHours, &r.Kind,
+			&r.TemperatureC, &r.FeelsLikeC, &r.HumidityPct, &r.DewPointC,
 			&r.PressureHPa, &r.WindSpeedKmh, &r.WindGustKmh, &r.WindDirectionDeg, &r.CloudCoverPct,
-			&r.PrecipitationMm, &r.PrecipitationProbabilityPct, &r.SnowfallCm, &r.UVIndex, &r.VisibilityKm,
-			&condition, &code, &text,
+			&r.PrecipitationProbabilityPct, &r.SnowfallCm, &r.VisibilityKm,
+			&r.Condition, &r.ConditionText, &polledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -225,11 +165,6 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 		if r.ForecastTime, err = parseTime(forecastTime); err != nil {
 			return nil, err
 		}
-		r.Location.City, r.Location.Country = city.String, country.String
-		r.Granularity = weather.Granularity(granularity)
-		r.Kind = weather.Kind(kind)
-		r.Condition = weather.Condition(condition)
-		r.ConditionCode, r.ConditionText = code.String, text.String
 		out = append(out, r)
 	}
 	return out, rows.Err()

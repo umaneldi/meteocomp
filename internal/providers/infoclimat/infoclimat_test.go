@@ -2,6 +2,7 @@ package infoclimat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -29,13 +30,15 @@ func fixture(stationID, ts string) string {
         "id_station": "` + stationID + `",
         "dh_utc": "` + ts + `",
         "temperature": 12.3,
+        "feels_like": 11.2,
         "temperature_min": null,
         "temperature_max": null,
         "humidite": 85.0,
         "point_de_rosee": 9.8,
         "pression": 1015.2,
         "vent_moyen": 11.5,
-        "vent_rafales": 28.8,
+        "vent_rafales": 40,
+        "vent_rafales_10min": 28.8,
         "vent_direction": 180.0,
         "pluie_1h": 0.5,
         "visibilite": 30000.0,
@@ -49,7 +52,7 @@ func fixture(stationID, ts string) string {
 
 func TestFetch(t *testing.T) {
 	const stationID = "07156"
-	ts := pastHourTimestamp()
+	ts := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour).Add(17*time.Minute + 30*time.Second).Format("2006-01-02 15:04:05")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("token"); got != "tok" {
@@ -86,11 +89,20 @@ func TestFetch(t *testing.T) {
 	if obs.Kind != weather.KindObservation {
 		t.Errorf("kind: got %q, want KindObservation", obs.Kind)
 	}
-	if obs.Granularity != weather.GranularityHourly {
-		t.Errorf("granularity: %q", obs.Granularity)
+	if obs.ForecastTime.Format("2006-01-02 15:04:05") != ts || obs.ForecastTime.Location() != time.UTC {
+		t.Errorf("sub-hour UTC timestamp: %v", obs.ForecastTime)
 	}
 	if obs.TemperatureC == nil || *obs.TemperatureC != 12.3 {
 		t.Errorf("temperature: %v", obs.TemperatureC)
+	}
+	if obs.FeelsLikeC == nil || *obs.FeelsLikeC != 11.2 {
+		t.Errorf("feels like: %v", obs.FeelsLikeC)
+	}
+	if obs.DewPointC == nil || *obs.DewPointC != 9.8 {
+		t.Errorf("dew point: %v", obs.DewPointC)
+	}
+	if obs.SnowfallCm != nil || obs.CloudCoverPct != nil || obs.PrecipitationProbabilityPct != nil {
+		t.Errorf("unsupported measurements must remain nil: %+v", obs)
 	}
 	if obs.HumidityPct == nil || *obs.HumidityPct != 85.0 {
 		t.Errorf("humidity: %v", obs.HumidityPct)
@@ -110,8 +122,52 @@ func TestFetch(t *testing.T) {
 	if obs.Condition != weather.ConditionRain {
 		t.Errorf("condition: got %q, want ConditionRain (ww=61)", obs.Condition)
 	}
-	if obs.ConditionCode != "61" {
-		t.Errorf("condition_code: %q", obs.ConditionCode)
+	if obs.ConditionText != "Rain" {
+		t.Errorf("condition text: %q", obs.ConditionText)
+	}
+}
+
+func TestParseReadingsZeroAndMissingMeasurements(t *testing.T) {
+	const fixture = `[
+		{"dh_utc":"2026-11-01 12:07:30","temperature":"0","feels_like":0,"humidite":0,"pression":"0",
+		 "vent_moyen":0,"vent_rafales_10min":"0","vent_direction":0,"visibilite":0,"temps_omm":0,
+		 "point_de_rosee":"0","pluie_neige_3h":3},
+		{"dh_utc":"2026-11-01 12:17:30","temperature":null,"feels_like":"","humidite":" ",
+		 "pression":null,"point_de_rosee":null,"vent_moyen":null,"vent_rafales_10min":"","vent_direction":null,"visibilite":"","temps_omm":null},
+		{"dh_utc":"2026-11-01 12:27:30","vent_rafales":25}
+	]`
+	var readings []rawReading
+	if err := json.Unmarshal([]byte(fixture), &readings); err != nil {
+		t.Fatal(err)
+	}
+	p := &Provider{}
+	got, err := p.parseReadings(time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), readings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d readings, want 3", len(got))
+	}
+	z := got[0]
+	for _, v := range []*float64{z.TemperatureC, z.FeelsLikeC, z.HumidityPct, z.DewPointC, z.PressureHPa,
+		z.WindSpeedKmh, z.WindGustKmh, z.WindDirectionDeg, z.VisibilityKm} {
+		if v == nil || *v != 0 {
+			t.Errorf("zero measurement lost: %v", v)
+		}
+	}
+	if z.Condition != weather.ConditionClear || z.SnowfallCm != nil {
+		t.Errorf("condition or unsupported measurements: %+v", z)
+	}
+	for _, f := range got[1:] {
+		for _, v := range []*float64{f.TemperatureC, f.FeelsLikeC, f.HumidityPct, f.DewPointC, f.PressureHPa,
+			f.WindSpeedKmh, f.WindGustKmh, f.WindDirectionDeg, f.VisibilityKm} {
+			if v != nil {
+				t.Errorf("missing measurement should be nil: %v", v)
+			}
+		}
+		if f.Kind != weather.KindObservation || f.Condition != weather.ConditionUnknown {
+			t.Errorf("kind or condition: %+v", f)
+		}
 	}
 }
 

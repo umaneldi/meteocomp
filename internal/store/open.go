@@ -25,19 +25,13 @@ type dialect struct {
 	name string
 	// numbered placeholders ($1, $2, ...) instead of '?'.
 	numbered bool
-	// aggregate expression concatenating the distinct kinds of a poll's readings.
-	distinctKinds string
 }
 
 var (
-	dialectSQLite = dialect{
-		name:          "sqlite",
-		distinctKinds: "GROUP_CONCAT(DISTINCT kind)",
-	}
+	dialectSQLite   = dialect{name: "sqlite"}
 	dialectPostgres = dialect{
-		name:          "postgres",
-		numbered:      true,
-		distinctKinds: "STRING_AGG(DISTINCT kind, ',')",
+		name:     "postgres",
+		numbered: true,
 	}
 )
 
@@ -121,15 +115,56 @@ func OpenPostgres(ctx context.Context, dsn string) (*SQLDB, error) {
 }
 
 func initDB(ctx context.Context, db *sql.DB, d dialect, schema string) (*SQLDB, error) {
-	if _, err := db.ExecContext(ctx, schema); err != nil {
+	if err := applyReadingSchema(ctx, db, d, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply %s schema: %w", d.name, err)
 	}
 	return &SQLDB{db: db, d: d}, nil
 }
 
-// migrateSQLite handles one-time schema evolution from older SQLite database layouts.
-// PostgreSQL support was added after these changes, so it has no legacy layouts.
+// applyReadingSchema removes legacy poll metadata atomically while retaining
+// sub-daily readings. Daily aggregates cannot be distinguished in the new model.
+func applyReadingSchema(ctx context.Context, db *sql.DB, d dialect, schema string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var legacy int
+	query := `SELECT COUNT(*) FROM pragma_table_info('readings') WHERE name = 'granularity'`
+	if d.name == "postgres" {
+		query = `SELECT COUNT(*) FROM information_schema.columns
+				WHERE table_schema = current_schema() AND table_name = 'readings' AND column_name = 'granularity'`
+	}
+	if err := tx.QueryRowContext(ctx, query).Scan(&legacy); err != nil {
+		return err
+	}
+	if legacy > 0 {
+		start := strings.Index(schema, "CREATE TABLE IF NOT EXISTS readings (")
+		end := strings.Index(schema[start:], ");") + start + 2
+		create := strings.Replace(schema[start:end], "CREATE TABLE IF NOT EXISTS readings", "CREATE TABLE readings_new", 1)
+		if _, err := tx.ExecContext(ctx, create); err != nil {
+			return fmt.Errorf("create simplified readings: %w", err)
+		}
+		columns := strings.ReplaceAll(readingColumns, "condition_text", "COALESCE(condition_text, '')")
+		if _, err := tx.ExecContext(ctx, "INSERT INTO readings_new ("+readingColumns+") SELECT "+
+			columns+" FROM readings WHERE granularity <> 'daily'"); err != nil {
+			return fmt.Errorf("copy readings: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "DROP TABLE readings; ALTER TABLE readings_new RENAME TO readings"); err != nil {
+			return fmt.Errorf("replace readings: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS polls"); err != nil {
+		return fmt.Errorf("remove legacy polls: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateSQLite handles historical SQLite-only changes before the shared migration.
 func migrateSQLite(ctx context.Context, db *sql.DB) error {
 	// Migration 1: rename forecasts table and add kind column.
 	var n int

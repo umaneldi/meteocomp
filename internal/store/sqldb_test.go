@@ -2,126 +2,190 @@ package store
 
 import (
 	"context"
-	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
-func TestRecordAndList(t *testing.T) { forEachBackend(t, testRecordAndList) }
+func testReading(at time.Time) ReadingRecord {
+	return ReadingRecord{
+		Provider: "om", ProviderType: "openmeteo", LocationName: "paris", PolledAt: at,
+		Forecast: weather.Forecast{
+			Kind: weather.KindForecast, ForecastTime: at.Add(6 * time.Hour),
+			TemperatureC: new(0.0), Condition: weather.ConditionRain, ConditionText: "Rain",
+		},
+	}
+}
+
+func TestRecordAndList(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s *SQLDB) {
+		ctx := context.Background()
+		start := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+		forecast := testReading(start)
+		observation := testReading(start)
+		observation.Kind = weather.KindObservation
+		observation.ForecastTime = start.Add(-time.Hour)
+		observation.TemperatureC = nil
+		if err := s.RecordReadings(ctx, []ReadingRecord{forecast, observation}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.ListReadings(ctx, ReadingFilter{Provider: "om", Location: "paris", Kind: "forecast"})
+		forecast.LeadTimeHours = 6
+		if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0], forecast) {
+			t.Fatalf("forecast round trip: %+v, %v", got, err)
+		}
+		got, err = s.ListReadings(ctx, ReadingFilter{To: start, Kind: "observation"})
+		if err != nil || len(got) != 1 || got[0].TemperatureC != nil || got[0].LeadTimeHours != -1 {
+			t.Fatalf("observation round trip: %+v, %v", got, err)
+		}
+		for _, filter := range []ReadingFilter{
+			{Provider: "other"}, {Location: "other"}, {From: start.Add(7 * time.Hour)},
+			{PolledFrom: start.Add(time.Second)}, {PolledTo: start},
+		} {
+			got, err := s.ListReadings(ctx, filter)
+			if err != nil || len(got) != 0 {
+				t.Fatalf("filter %+v: %+v, %v", filter, got, err)
+			}
+		}
+	})
+}
 
 func TestReadingsPagination(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, s *SQLDB) {
 		ctx := context.Background()
 		start := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-		for range 3 {
-			_, err := s.RecordPoll(ctx, PollResult{
-				Provider: "test", Location: weather.Location{Name: "test"},
-				StartedAt: start, FinishedAt: start,
-				Forecasts: []weather.Forecast{
-					{ForecastTime: start, Granularity: weather.GranularityHourly},
-					{ForecastTime: start.Add(24 * time.Hour), Granularity: weather.GranularityDaily},
-				},
-			})
-			if err != nil {
+		for i := range 5 {
+			if err := s.RecordReadings(ctx, []ReadingRecord{testReading(start.Add(time.Duration(i) * time.Hour))}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		filter := ReadingFilter{Order: "id_desc", Limit: 2, From: start.Add(24 * time.Hour), Kind: "forecast", Location: "test"}
-		first, err := s.ListReadings(ctx, filter)
-		if err != nil {
-			t.Fatal(err)
+		filter := ReadingFilter{Limit: 2, PolledTo: start.Add(5 * time.Hour)}
+		var got []ReadingRecord
+		for {
+			page, err := s.ListReadings(ctx, filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, page...)
+			if len(page) < filter.Limit {
+				break
+			}
+			filter.Offset += len(page)
+			if filter.Offset == 2 {
+				if err := s.RecordReadings(ctx, []ReadingRecord{testReading(start.Add(6 * time.Hour))}); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
-		if len(first) != 2 || first[0].ID != 6 || first[1].ID != 4 {
-			t.Fatalf("first page: %+v", first)
+		if len(got) != 5 {
+			t.Fatalf("got %d rows", len(got))
 		}
-		filter.BeforeID = first[1].ID
-		second, err := s.ListReadings(ctx, filter)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(second) != 1 || second[0].ID != 2 {
-			t.Fatalf("second page: %+v", second)
-		}
-		filter.BeforeID = second[0].ID
-		last, err := s.ListReadings(ctx, filter)
-		if err != nil || len(last) != 0 {
-			t.Fatalf("last page: %+v, %v", last, err)
+		for i, r := range got {
+			if !r.PolledAt.Equal(start.Add(time.Duration(4-i) * time.Hour)) {
+				t.Fatalf("unexpected page ordering: %+v", got)
+			}
 		}
 	})
 }
 
-func testRecordAndList(t *testing.T, s *SQLDB) {
-	ctx := context.Background()
-
-	loc := weather.Location{Name: "paris", City: "Paris", Country: "FR", Latitude: 48.85, Longitude: 2.35}
-	start := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
-	temp := 10.5
-	fc := []weather.Forecast{
-		{ForecastTime: start.Add(6 * time.Hour), Granularity: weather.GranularityHourly, TemperatureC: &temp,
-			Condition: weather.ConditionRain, ConditionCode: "61", ConditionText: "Rain"},
-		{ForecastTime: start.Add(24 * time.Hour), Granularity: weather.GranularityDaily, Condition: weather.ConditionClear},
-	}
-
-	okID, err := s.RecordPoll(ctx, PollResult{Provider: "om", ProviderType: "openmeteo", Location: loc,
-		StartedAt: start, FinishedAt: start.Add(250 * time.Millisecond), Forecasts: fc})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.RecordPoll(ctx, PollResult{Provider: "owm", ProviderType: "openweathermap", Location: loc,
-		StartedAt: start, FinishedAt: start, Err: errors.New("http 401")}); err != nil {
-		t.Fatal(err)
-	}
-
-	polls, err := s.ListPolls(ctx, PollFilter{Status: StatusError})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(polls) != 1 || polls[0].Provider != "owm" || polls[0].Error != "http 401" {
-		t.Errorf("error polls: %+v", polls)
-	}
-	polls, _ = s.ListPolls(ctx, PollFilter{Provider: "om"})
-	if len(polls) != 1 || polls[0].ReadingCount != 2 || polls[0].DurationMs != 250 || !polls[0].StartedAt.Equal(start) {
-		t.Errorf("ok polls: %+v", polls)
-	}
-
-	got, err := s.ListReadings(ctx, ReadingFilter{PollID: okID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d readings, want 2", len(got))
-	}
-	// Ordered by granularity then forecast_time: "daily" < "hourly".
-	d, h := got[0], got[1]
-	if d.Granularity != weather.GranularityDaily || d.TemperatureC != nil || d.LeadTimeHours != 24 {
-		t.Errorf("daily row: %+v", d)
-	}
-	if *h.TemperatureC != 10.5 || h.Condition != weather.ConditionRain || h.ConditionCode != "61" ||
-		h.Location != loc || h.LeadTimeHours != 6 || !h.PolledAt.Equal(start) {
-		t.Errorf("hourly row: %+v", h)
-	}
-	// Both data points have forecast_time in the future relative to start, so Kind defaults to forecast.
-	for _, r := range got {
-		if r.Kind != weather.KindForecast {
-			t.Errorf("expected KindForecast, got %q", r.Kind)
+func TestRecordReadingsAtomicValidation(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s *SQLDB) {
+		ctx := context.Background()
+		valid := testReading(time.Now().UTC())
+		for _, field := range []string{"provider", "provider_type", "location_name", "forecast_time", "polled_at", "kind"} {
+			invalid := valid
+			switch field {
+			case "provider":
+				invalid.Provider = ""
+			case "provider_type":
+				invalid.ProviderType = ""
+			case "location_name":
+				invalid.LocationName = ""
+			case "forecast_time":
+				invalid.ForecastTime = time.Time{}
+			case "polled_at":
+				invalid.PolledAt = time.Time{}
+			case "kind":
+				invalid.Kind = "invalid"
+			}
+			if err := s.RecordReadings(ctx, []ReadingRecord{valid, invalid}); err == nil {
+				t.Fatalf("accepted invalid %s", field)
+			}
 		}
-	}
+		rows, err := s.ListReadings(ctx, ReadingFilter{})
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("partial transaction persisted: %+v, %v", rows, err)
+		}
+	})
+}
 
-	got, _ = s.ListReadings(ctx, ReadingFilter{From: start.Add(12 * time.Hour)})
-	if len(got) != 1 || got[0].Granularity != weather.GranularityDaily {
-		t.Errorf("time filter: %+v", got)
-	}
-
-	// Kind filter: only forecasts (both rows are forecasts, so count stays 2).
-	got, _ = s.ListReadings(ctx, ReadingFilter{Kind: "forecast"})
-	if len(got) != 2 {
-		t.Errorf("kind=forecast filter: got %d, want 2", len(got))
-	}
-	// Kind filter: no observations yet.
-	got, _ = s.ListReadings(ctx, ReadingFilter{Kind: "observation"})
-	if len(got) != 0 {
-		t.Errorf("kind=observation filter: got %d, want 0", len(got))
-	}
+func TestSimplifiedSchemaMigration(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s *SQLDB) {
+		ctx := context.Background()
+		schema := sqliteSchema
+		if s.d.name == "postgres" {
+			schema = postgresSchema
+		}
+		start := strings.Index(schema, "CREATE TABLE IF NOT EXISTS readings (")
+		end := strings.Index(schema[start:], ");") + start + 2
+		legacy := strings.Replace(schema[start:end], "readings (", `readings (
+			id INTEGER PRIMARY KEY,
+			poll_id INTEGER REFERENCES polls(id),
+			granularity TEXT NOT NULL,`, 1)
+		legacy = strings.Replace(legacy, "condition_text                TEXT    NOT NULL", "condition_text TEXT", 1)
+		if _, err := s.db.ExecContext(ctx, `DROP TABLE readings;
+			CREATE TABLE polls (id INTEGER PRIMARY KEY);
+			INSERT INTO polls VALUES (1);`+legacy); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+		for i, granularity := range []string{"hourly", "3h", "daily"} {
+			if _, err := s.db.ExecContext(ctx, s.d.rebind(`INSERT INTO readings
+				(id, poll_id, granularity, provider, provider_type, location_name, polled_at,
+				forecast_time, lead_time_hours, kind, temperature_c, condition, condition_text)
+				VALUES (?, 1, ?, 'om', 'openmeteo', 'paris', ?, ?, 6, 'forecast', 0, 'rain', NULL)`),
+				i+1, granularity, formatTime(at), formatTime(at.Add(6*time.Hour))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for range 2 {
+			if err := applyReadingSchema(ctx, s.db, s.d, schema); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rows, err := s.ListReadings(ctx, ReadingFilter{})
+		if err != nil || len(rows) != 2 || rows[0].TemperatureC == nil || *rows[0].TemperatureC != 0 ||
+			rows[0].ConditionText != "" || rows[0].LeadTimeHours != 6 {
+			t.Fatalf("migration lost retained values: %+v, %v", rows, err)
+		}
+		columns, err := s.db.QueryContext(ctx, "SELECT * FROM readings LIMIT 0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		names, err := columns.Columns()
+		columns.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := strings.Fields(strings.ReplaceAll(readingColumns, ",", " "))
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected reading columns: %v", names)
+		}
+		for _, name := range names {
+			if !strings.Contains(","+strings.Join(expected, ",")+",", ","+name+",") {
+				t.Fatalf("unexpected reading column %q", name)
+			}
+		}
+		var tables int
+		query := "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='polls'"
+		if s.d.name == "postgres" {
+			query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='polls'"
+		}
+		if err := s.db.QueryRowContext(ctx, query).Scan(&tables); err != nil || tables != 0 {
+			t.Fatalf("polls table remains: %d, %v", tables, err)
+		}
+	})
 }

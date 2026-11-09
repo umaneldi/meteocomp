@@ -51,7 +51,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/provider-types", s.listProviderTypes)
 	mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	mux.HandleFunc("GET /api/v1/locations", s.listLocations)
-	mux.HandleFunc("GET /api/v1/polls", s.listPolls)
 	mux.HandleFunc("POST /api/v1/polls", s.triggerPoll)
 	mux.HandleFunc("GET /api/v1/readings", s.listReadings)
 	mux.HandleFunc("GET /api/v1/stations", s.listStations)
@@ -86,26 +85,6 @@ func (s *Server) listLocations(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Settings().Locations)
 }
 
-func (s *Server) listPolls(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	limit, err := parseLimit(q.Get("limit"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	polls, err := s.store.ListPolls(r.Context(), store.PollFilter{
-		Provider: q.Get("provider"),
-		Location: q.Get("location"),
-		Status:   q.Get("status"),
-		Limit:    limit,
-	})
-	if err != nil {
-		s.internalError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, polls)
-}
-
 // triggerPoll starts an immediate poll of one provider (?provider=name) or all
 // enabled providers, in the background. It responds 202 Accepted.
 func (s *Server) triggerPoll(w http.ResponseWriter, r *http.Request) {
@@ -136,21 +115,21 @@ func (s *Server) triggerPoll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := store.ReadingFilter{
-		Provider:    q.Get("provider"),
-		Location:    q.Get("location"),
-		Granularity: q.Get("granularity"),
-		Kind:        q.Get("kind"),
-		Order:       q.Get("order"),
+		Provider: q.Get("provider"),
+		Location: q.Get("location"),
+		Kind:     q.Get("kind"),
 	}
-	if f.Order != "" && f.Order != "id_desc" {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("order must be id_desc when supplied"))
-		return
+	for _, removed := range []string{"order", "before_id", "poll_id", "granularity"} {
+		if q.Has(removed) {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("%s is no longer supported; use limit and offset for pagination", removed))
+			return
+		}
 	}
 	var err error
-	if q.Has("before_id") {
-		f.BeforeID, err = strconv.ParseInt(q.Get("before_id"), 10, 64)
-		if err != nil || f.BeforeID <= 0 || f.Order != "id_desc" {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("before_id must be a positive integer with order=id_desc"))
+	if q.Has("offset") {
+		f.Offset, err = strconv.Atoi(q.Get("offset"))
+		if err != nil || f.Offset < 0 {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("offset must be a non-negative integer"))
 			return
 		}
 	}
@@ -166,12 +145,6 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, fmt.Errorf("%s: expected RFC3339 time, got %q", key, v))
 				return
 			}
-		}
-	}
-	if v := q.Get("poll_id"); v != "" {
-		if f.PollID, err = strconv.ParseInt(v, 10, 64); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("poll_id: %w", err))
-			return
 		}
 	}
 	out, err := s.store.ListReadings(r.Context(), f)

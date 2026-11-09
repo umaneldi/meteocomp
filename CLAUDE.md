@@ -9,8 +9,8 @@ database table/column names, test data descriptions and API payloads.
 ## Project overview
 
 meteocomp is a Go web service that polls any number of user-configured weather providers
-for a set of locations, stores every poll and every forecast data point in a database, and
-exposes them over an HTTP/JSON API. Poll and forecast rows are append-only so forecasts can be
+for a set of locations, stores every weather reading in a database, and
+exposes them over an HTTP/JSON API. Reading rows are append-only so forecasts can be
 compared across providers and across lead times (how the forecast for a given time evolves).
 Settings (shared poll interval, locations, provider instances and API keys) are stored in the
 database and edited from an embedded web UI.
@@ -28,18 +28,20 @@ database and edited from an embedded web UI.
   selected by the `DATABASE_URI` scheme. `schema_sqlite.sql` / `schema_postgres.sql` are embedded and
   must be kept in sync; queries use `?` placeholders, rebound per dialect.
 - `internal/poller` — one goroutine per provider instance, polling all locations at the shared interval,
-  resuming from the last recorded poll. `Manager` swaps pollers when settings change.
+  resuming from the latest stored reading. `Manager` swaps pollers when settings change.
 - `internal/api` — HTTP handlers, including `GET/PUT /api/v1/settings` (API keys are write-only).
 - `internal/web` — embedded settings UI (`static/`, vanilla HTML/CSS/JS, no build step).
 
 ## Conventions
 
-- Units stored and returned: °C, %, hPa, km/h, mm (precipitation), cm (snowfall), km (visibility),
+- Units stored and returned: °C, %, hPa, km/h, cm (snowfall), km (visibility),
   degrees (wind direction). Providers convert to these units.
 - Times are UTC. Optional measures are `*float64`; `nil` means the provider did not supply it (NULL in DB).
-- Every provider maps its raw condition codes to `weather.Condition` and keeps the raw
-  code/text in `ConditionCode`/`ConditionText`.
-- Failed polls are recorded too (`polls.status = 'error'`).
+- Every provider maps its raw condition codes to `weather.Condition` and keeps the
+  description in `ConditionText`.
+- Readings match `Reading` in `proto/global_map.py`, with NULL for missing measurements.
+  There are no poll rows, reading IDs, granularity or native daily aggregates.
+- Failed or empty fetches leave no stored timestamp; failures are logged.
 - Provider tests use `httptest` with JSON fixtures; tests must not hit real APIs.
 
 ## Adding a provider

@@ -48,22 +48,21 @@ func testSettingsRoundTrip(t *testing.T, st *SQLDB) {
 	}
 }
 
-func TestLastPollTimes(t *testing.T) { forEachBackend(t, testLastPollTimes) }
+func TestLastReadingTimes(t *testing.T) { forEachBackend(t, testLastReadingTimes) }
 
-func testLastPollTimes(t *testing.T, st *SQLDB) {
+func testLastReadingTimes(t *testing.T, st *SQLDB) {
 	ctx := context.Background()
 	t1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	for _, at := range []time.Time{t1, t1.Add(time.Hour)} {
-		if _, err := st.RecordPoll(ctx, PollResult{Provider: "p", ProviderType: "x",
-			Location: weather.Location{Name: "l"}, StartedAt: at, FinishedAt: at}); err != nil {
+		if err := st.RecordReadings(ctx, []ReadingRecord{testReading(at)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, err := st.LastPollTimes(ctx)
+	got, err := st.LastReadingTimes(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got["p"].Equal(t1.Add(time.Hour)) || len(got) != 1 {
+	if !got["om"].Equal(t1.Add(time.Hour)) || len(got) != 1 {
 		t.Errorf("got %v", got)
 	}
 }

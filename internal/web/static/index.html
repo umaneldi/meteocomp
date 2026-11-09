@@ -41,7 +41,7 @@
         <span class="panel-index">01</span>
         <div>
           <h2>Polling interval</h2>
-          <p class="hint">Shared by every provider. After a change, each provider resumes from its last poll, so saving never causes an extra burst of API calls.</p>
+          <p class="hint">Shared by every provider. Each provider resumes from its latest stored reading. Failed or empty fetches have no stored timestamp and may be retried after a restart or settings change.</p>
         </div>
       </header>
       <div class="interval-row">
@@ -106,20 +106,20 @@
       <header class="panel-head">
         <span class="panel-index">04</span>
         <div>
-          <h2>Recent activity</h2>
-          <p class="hint">Latest polls, refreshed automatically. New locations are picked up at each provider's next poll — or poll now.</p>
+          <h2>Recent readings</h2>
+          <p class="hint">Latest weather data, refreshed automatically. Fetch failures are available in the server logs.</p>
         </div>
         <button type="button" class="btn" id="poll-all">Poll all now</button>
       </header>
       <div class="table-wrap">
         <table class="grid compact">
           <thead>
-            <tr><th>When</th><th>Provider</th><th>Location</th><th>Status</th><th>Type</th><th class="num">Points</th><th class="num">Duration</th></tr>
+            <tr><th>Retrieved</th><th>Provider</th><th>Location</th><th>Kind</th><th>Forecast time (UTC)</th><th class="num">Temperature</th></tr>
           </thead>
-          <tbody id="polls-body"></tbody>
+          <tbody id="readings-body"></tbody>
         </table>
       </div>
-      <p class="empty" id="polls-empty" hidden>No polls recorded yet.</p>
+      <p class="empty" id="readings-empty" hidden>No readings recorded yet.</p>
     </section>
     <section id="forecast" class="panel" hidden>
       <header class="panel-head">
@@ -147,8 +147,8 @@
       <div id="fc-wrap" class="fc-wrap" aria-live="polite">
         <p class="empty" id="fc-empty">Select a location above to view forecast data.</p>
       </div>
-      <p class="hint small">Each value represents one provider poll. Lead time is measured in hours from the poll to today's midnight UTC; later polls and observations are excluded. Native daily values are preferred, otherwise hourly or 3-hourly forecasts are aggregated. Partial coverage is flagged; missing values are not zero. Hover a table value or focus/hover a chart point for poll details.</p>
-      <p class="hint small">Native daily values retain the provider's calendar-day definition; derived values cover the UTC day. The view refreshes every minute while active. All historical readings remain available via <code>GET /api/v1/readings</code>.</p>
+      <p class="hint small">Each value represents one provider retrieval, grouped by provider and retrieval time. Chart lead time is measured to today's noon UTC; only forecasts retrieved at or before midnight UTC are included. Hourly (OpenWeatherMap: 3-hourly) data is aggregated over the UTC day. Partial coverage is flagged; missing values are not zero.</p>
+      <p class="hint small">The view refreshes every minute while active. All historical readings remain available via <code>GET /api/v1/readings</code>.</p>
     </section>
   </main>
 

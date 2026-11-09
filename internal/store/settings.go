@@ -123,22 +123,3 @@ func (s *SQLDB) SaveSettings(ctx context.Context, cfg config.Settings) error {
 	}
 	return tx.Commit()
 }
-
-func (s *SQLDB) LastPollTimes(ctx context.Context) (map[string]time.Time, error) {
-	rows, err := s.db.QueryContext(ctx, s.d.rebind(`SELECT provider, MAX(started_at) FROM polls GROUP BY provider`))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]time.Time{}
-	for rows.Next() {
-		var name, at string
-		if err := rows.Scan(&name, &at); err != nil {
-			return nil, err
-		}
-		if out[name], err = parseTime(at); err != nil {
-			return nil, err
-		}
-	}
-	return out, rows.Err()
-}

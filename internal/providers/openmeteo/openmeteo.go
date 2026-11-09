@@ -83,11 +83,8 @@ func (p *Provider) Type() string { return Type }
 
 const (
 	hourlyVars = "temperature_2m,relative_humidity_2m,dew_point_2m,apparent_temperature," +
-		"precipitation_probability,precipitation,snowfall,weather_code,pressure_msl," +
-		"cloud_cover,visibility,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index"
-	dailyVars = "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max," +
-		"precipitation_sum,precipitation_probability_max,snowfall_sum,wind_speed_10m_max," +
-		"wind_gusts_10m_max,wind_direction_10m_dominant,uv_index_max"
+		"precipitation_probability,snowfall,weather_code,surface_pressure," +
+		"cloud_cover,visibility,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
 )
 
 type response struct {
@@ -98,31 +95,15 @@ type response struct {
 		DewPoint2m               []*float64 `json:"dew_point_2m"`
 		ApparentTemperature      []*float64 `json:"apparent_temperature"`
 		PrecipitationProbability []*float64 `json:"precipitation_probability"`
-		Precipitation            []*float64 `json:"precipitation"`
 		Snowfall                 []*float64 `json:"snowfall"`
 		WeatherCode              []*int     `json:"weather_code"`
-		PressureMSL              []*float64 `json:"pressure_msl"`
+		SurfacePressure          []*float64 `json:"surface_pressure"`
 		CloudCover               []*float64 `json:"cloud_cover"`
 		Visibility               []*float64 `json:"visibility"`
 		WindSpeed10m             []*float64 `json:"wind_speed_10m"`
 		WindDirection10m         []*float64 `json:"wind_direction_10m"`
 		WindGusts10m             []*float64 `json:"wind_gusts_10m"`
-		UVIndex                  []*float64 `json:"uv_index"`
 	} `json:"hourly"`
-	Daily struct {
-		Time                        []string   `json:"time"`
-		WeatherCode                 []*int     `json:"weather_code"`
-		Temperature2mMax            []*float64 `json:"temperature_2m_max"`
-		Temperature2mMin            []*float64 `json:"temperature_2m_min"`
-		ApparentTemperatureMax      []*float64 `json:"apparent_temperature_max"`
-		PrecipitationSum            []*float64 `json:"precipitation_sum"`
-		PrecipitationProbabilityMax []*float64 `json:"precipitation_probability_max"`
-		SnowfallSum                 []*float64 `json:"snowfall_sum"`
-		WindSpeed10mMax             []*float64 `json:"wind_speed_10m_max"`
-		WindGusts10mMax             []*float64 `json:"wind_gusts_10m_max"`
-		WindDirection10mDominant    []*float64 `json:"wind_direction_10m_dominant"`
-		UVIndexMax                  []*float64 `json:"uv_index_max"`
-	} `json:"daily"`
 }
 
 func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.Forecast, error) {
@@ -130,7 +111,6 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 	q.Set("latitude", strconv.FormatFloat(loc.Latitude, 'f', -1, 64))
 	q.Set("longitude", strconv.FormatFloat(loc.Longitude, 'f', -1, 64))
 	q.Set("hourly", hourlyVars)
-	q.Set("daily", dailyVars)
 	q.Set("timezone", "UTC")
 	q.Set("wind_speed_unit", "kmh")
 	q.Set("forecast_days", strconv.Itoa(p.forecastDays))
@@ -143,7 +123,7 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 		return nil, err
 	}
 
-	out := make([]weather.Forecast, 0, len(r.Hourly.Time)+len(r.Daily.Time))
+	out := make([]weather.Forecast, 0, len(r.Hourly.Time))
 	h := r.Hourly
 	for i, ts := range h.Time {
 		t, err := time.Parse("2006-01-02T15:04", ts)
@@ -151,76 +131,38 @@ func (p *Provider) Fetch(ctx context.Context, loc weather.Location) ([]weather.F
 			return nil, fmt.Errorf("parse hourly time %q: %w", ts, err)
 		}
 		f := weather.Forecast{
+			Kind:                        weather.KindForecast,
 			ForecastTime:                t.UTC(),
-			Granularity:                 weather.GranularityHourly,
 			TemperatureC:                at(h.Temperature2m, i),
 			FeelsLikeC:                  at(h.ApparentTemperature, i),
 			HumidityPct:                 at(h.RelativeHumidity2m, i),
 			DewPointC:                   at(h.DewPoint2m, i),
-			PressureHPa:                 at(h.PressureMSL, i),
+			PressureHPa:                 at(h.SurfacePressure, i),
 			WindSpeedKmh:                at(h.WindSpeed10m, i),
 			WindGustKmh:                 at(h.WindGusts10m, i),
 			WindDirectionDeg:            at(h.WindDirection10m, i),
 			CloudCoverPct:               at(h.CloudCover, i),
-			PrecipitationMm:             at(h.Precipitation, i),
 			PrecipitationProbabilityPct: at(h.PrecipitationProbability, i),
 			SnowfallCm:                  at(h.Snowfall, i),
-			UVIndex:                     at(h.UVIndex, i),
 		}
 		if v := at(h.Visibility, i); v != nil {
 			f.VisibilityKm = new(*v / 1000)
 		}
 		setCondition(&f, atInt(h.WeatherCode, i))
-		f.Kind = kindFor(t)
-		if !isEmpty(f) {
-			out = append(out, f)
-		}
-	}
-
-	d := r.Daily
-	for i, ds := range d.Time {
-		t, err := time.Parse("2006-01-02", ds)
-		if err != nil {
-			return nil, fmt.Errorf("parse daily time %q: %w", ds, err)
-		}
-		f := weather.Forecast{
-			ForecastTime:                t.UTC(),
-			Granularity:                 weather.GranularityDaily,
-			TemperatureMinC:             at(d.Temperature2mMin, i),
-			TemperatureMaxC:             at(d.Temperature2mMax, i),
-			FeelsLikeC:                  at(d.ApparentTemperatureMax, i),
-			WindSpeedKmh:                at(d.WindSpeed10mMax, i),
-			WindGustKmh:                 at(d.WindGusts10mMax, i),
-			WindDirectionDeg:            at(d.WindDirection10mDominant, i),
-			PrecipitationMm:             at(d.PrecipitationSum, i),
-			PrecipitationProbabilityPct: at(d.PrecipitationProbabilityMax, i),
-			SnowfallCm:                  at(d.SnowfallSum, i),
-			UVIndex:                     at(d.UVIndexMax, i),
-		}
-		setCondition(&f, atInt(d.WeatherCode, i))
-		f.Kind = kindFor(t)
-		if !isEmpty(f) {
+		if atInt(h.WeatherCode, i) != nil || !isEmpty(f) {
 			out = append(out, f)
 		}
 	}
 	return out, nil
 }
 
-func kindFor(_ time.Time) weather.Kind {
-	return weather.KindForecast
-}
-
 // isEmpty reports whether f carries no value at all, which happens past the
 // horizon of the models behind the endpoint.
 func isEmpty(f weather.Forecast) bool {
-	if f.ConditionCode != "" {
-		return false
-	}
 	for _, v := range []*float64{
-		f.TemperatureC, f.TemperatureMinC, f.TemperatureMaxC, f.FeelsLikeC, f.HumidityPct,
+		f.TemperatureC, f.FeelsLikeC, f.HumidityPct,
 		f.DewPointC, f.PressureHPa, f.WindSpeedKmh, f.WindGustKmh, f.WindDirectionDeg,
-		f.CloudCoverPct, f.PrecipitationMm, f.PrecipitationProbabilityPct, f.SnowfallCm,
-		f.UVIndex, f.VisibilityKm,
+		f.CloudCoverPct, f.PrecipitationProbabilityPct, f.SnowfallCm, f.VisibilityKm,
 	} {
 		if v != nil {
 			return false
@@ -248,7 +190,6 @@ func setCondition(f *weather.Forecast, code *int) {
 		f.Condition = weather.ConditionUnknown
 		return
 	}
-	f.ConditionCode = strconv.Itoa(*code)
 	f.Condition, f.ConditionText = wmo(*code)
 }
 

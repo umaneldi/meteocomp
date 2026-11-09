@@ -1,7 +1,8 @@
 # meteocomp
 
-A Go web service that polls as many weather providers as you configure, logs every
-poll and forecast to a database, and serves them over a JSON API so providers can be compared.
+A Go web service that polls as many weather providers as you configure, appends weather
+readings to a database, and serves them over a JSON API so providers can be compared.
+Fetch attempts and failures are logged, not stored in separate poll rows.
 
 ## Quick start
 
@@ -23,40 +24,40 @@ Open http://localhost:8080/ and configure everything from the web UI:
 
 Settings are persisted in the database. On first start the database is seeded with defaults
 (Open-Meteo enabled, keyed providers disabled, no locations). Saving restarts the poller; each
-provider resumes from its last recorded poll, so saving or restarting does not trigger extra API calls.
+provider resumes from its latest stored reading. Failed or empty fetches have no stored
+timestamp, so saving or restarting may retry them immediately.
 Use *Poll now* to fetch immediately.
 
 ### Forecast evolution
 
-Lead time is `(today's midnight UTC - poll start time)` in hours, including fractional
+Chart lead time is `(today's noon UTC - retrieval time)` in hours, including fractional
 hours. Only forecasts polled **at or before that midnight** are shown; observations and
 later polls are excluded. History must therefore be collected before the target date.
-The view loads all matching history through cursor pagination, refreshes every minute while
+The view loads all matching history through offset pagination, refreshes every minute while
 active and on tab entry, and rolls over to the new UTC date automatically.
 
-Each provider/poll supplies one daily result. Native daily values are preferred per statistic.
-Missing native values are derived from that poll's hourly forecasts, or 3-hourly forecasts
-when no hourly records exist. Different polls and resolutions are never mixed:
+Each provider/retrieval time supplies one derived daily result. Only sub-daily readings are
+stored: hourly forecasts, or 3-hourly forecasts from OpenWeatherMap. Daily summaries group
+by provider and `polled_at`; different retrievals are never mixed:
 
 | Statistic | Sub-daily aggregation |
 | --- | --- |
-| Temperature, humidity, pressure, cloud cover, visibility | Mean |
-| Minimum / maximum temperature | Minimum / maximum of per-slot extrema, falling back to per-slot temperature |
-| Feels-like, wind speed, wind gust, UV index | Maximum |
-| Precipitation | Sum |
+| Temperature, humidity, dew point, pressure, cloud cover, visibility | Mean |
+| Minimum / maximum temperature | Minimum / maximum of per-slot temperature |
+| Feels-like, wind speed, wind gust, rain probability | Maximum |
+| Snowfall | Sum |
 
-Mean temperature never falls back to daily maximum temperature. Missing values remain
+Missing values remain
 unavailable, not zero. Derived values may use a partial day: the table flags **partial
 coverage** with covered hours and available slot counts, and the chart outlines partial
 points and shows a warning. Coverage is measured per statistic, so a missing field reduces
-its coverage even if other fields span the whole day. Partial precipitation totals and
+its coverage even if other fields span the whole day. Partial snowfall totals and
 extrema must not be interpreted as full-day values. Hover a table value or focus/hover a
 chart point for the poll time, lead time and provenance.
 
-Native daily forecasts retain their provider's calendar-day definition, stored under that
-date at midnight UTC; derived values cover the actual UTC day. Providers' native daily
-definitions can therefore differ from derived UTC summaries. Exact lead times are not
-bucketed, so asynchronously polled providers may occupy different table rows.
+Derived values cover the actual UTC day. Exact lead times are not bucketed, so
+asynchronously polled providers may occupy different table rows. Retrievals by the same
+provider in the same second share one chart group because readings have no poll IDs.
 All historical readings remain stored and available through the API.
 
 ### API keys from environment variables
@@ -126,10 +127,10 @@ docker run --rm -p 8080:8080 \
 
 | type             | key | granularity       | options                          |
 |------------------|-----|-------------------|----------------------------------|
-| `openmeteo`      | no  | hourly + daily    | `endpoint` (default `forecast`), `models`, `forecast_days` (1-16, default 7) |
+| `openmeteo`      | no  | hourly           | `endpoint` (default `forecast`), `models`, `forecast_days` (1-16, default 7) |
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
-| `weatherapi`     | yes | hourly + daily    | `days` (1-14, default 3)         |
-| `infoclimat`     | yes | hourly (obs)      | `past_days` (1-30, default 7)    |
+| `weatherapi`     | yes | hourly           | global `forecast_days` (capped at 14) |
+| `infoclimat`     | yes | observations     | global `forecast_days` controls lookback |
 
 `openmeteo` can target any Open-Meteo endpoint with the `endpoint` option (the path after
 `/v1/`): `forecast` (default) blends the best models for each location, while model-specific
@@ -138,7 +139,7 @@ endpoints such as `meteofrance` (Météo-France AROME 2.5 km over France + ARPEG
 optionally narrows it further (e.g. `arome_france`). Points beyond the models' horizon are dropped.
 Configure several `openmeteo` instances to compare weather services side by side.
 
-`infoclimat` fetches hourly synoptic weather station observations from Infoclimat
+`infoclimat` fetches weather station observations, including sub-hour readings, from Infoclimat
 (https://www.infoclimat.fr/opendata/). All returned data points have `kind=observation`.
 Requires a token from the Infoclimat opendata portal. The station queried per location is
 taken from each location's `station_id` field; one provider instance handles all configured
@@ -162,13 +163,21 @@ between backends.
 Settings tables (`settings`, `locations`, `providers`) hold the current
 configuration; they are replaced as a whole on each save. Data tables:
 
-- `polls` — one row per provider/location fetch: timestamps, duration, status (`ok`/`error`), error, reading count.
-- `readings` — one row per weather data point (forecast or observation): poll date, data time, granularity,
-  kind (`forecast` or `observation`), lead time, provider, location (name, city, country, lat/lon),
-  temperature (current/min/max/feels-like), humidity, dew point, pressure, wind speed/gust/direction,
-  cloud cover, precipitation amount/probability, snowfall, UV index, visibility, normalized condition
+- `readings` — one row per weather data point, matching `Reading` in `proto/global_map.py`:
+  retrieval time, forecast time, kind (`forecast` or `observation`), lead time, provider name/type,
+  location name, temperature, feels-like, humidity, dew point, pressure, wind speed/gust/direction,
+  cloud cover, rain probability, snowfall, visibility, normalized condition
   (`clear`, `partly_cloudy`, `cloudy`, `fog`, `drizzle`, `rain`, `freezing_rain`, `sleet`, `snow`,
-  `thunderstorm`, `unknown`) plus the raw provider code and text.
+  `thunderstorm`, `unknown`) and provider description.
+
+There are no reading IDs, poll IDs or poll table. Missing measurements are SQL `NULL` and
+JSON `null`, never sentinel numbers. Location details remain in `locations`; readings refer
+to them by `location_name` without a foreign key, preserving history after settings edits.
+
+**Back up an existing database before upgrading.** Startup migrates both backends
+transactionally: it retains hourly/3-hourly readings and their supported values, drops
+legacy daily aggregates (which cannot be distinguished in the simplified model), removes
+the obsolete columns and poll history, and retains settings. This migration is irreversible.
 
 See `internal/store/schema_sqlite.sql` and `internal/store/schema_postgres.sql` for the exact schema.
 
@@ -187,19 +196,19 @@ a throwaway schema in that database.
 | GET    | `/api/v1/provider-types` | available provider types, options and whether they need a key |
 | GET    | `/api/v1/providers`  | |
 | GET    | `/api/v1/locations`  | |
-| GET    | `/api/v1/polls`      | `provider`, `location`, `status`, `limit` |
 | POST   | `/api/v1/polls`      | `provider` (optional) — trigger an immediate poll |
-| GET    | `/api/v1/readings`   | `provider`, `location`, `granularity`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `poll_id`, `limit`, `order`, `before_id` |
+| GET    | `/api/v1/readings`   | `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `limit`, `offset` |
 | GET    | `/api/v1/stations`   | `q` (min 2 chars) — search Infoclimat stations by ID or name |
 
 `limit` defaults to 500 (max 10000).
 
-For stable readings pagination, request `order=id_desc`, then pass the last reading's
-positive integer ID as `before_id` on each subsequent request, keeping all other filters
-unchanged. Pages remain JSON arrays; stop at a short or empty page. The cursor is exclusive.
-New higher IDs inserted after the first page appear on a subsequent refresh, not during the
-current traversal. Without `order`, the existing poll-time ordering is unchanged;
-`before_id` requires `order=id_desc`. Unsupported order/cursor values return `400`.
+Readings are ordered by retrieval time descending, with deterministic field-based tie
+breakers. Paginate with `limit` and a non-negative `offset` (default 0), increasing the
+offset by each page's length until a short or empty page. Keep all filters unchanged and
+use a fixed `polled_to` cutoff to exclude later retrievals. Offset pagination is not a
+database snapshot: an in-flight fetch started before the cutoff can still add rows.
+The removed `order`, `before_id`, `poll_id` and `granularity` parameters return `400`.
+The former `GET /api/v1/polls` endpoint is removed; `POST` still triggers a fetch.
 
 `PUT /api/v1/settings` takes the same document as `GET` returns. Per provider, `api_key`
 is optional: omitted keeps the stored key, `""` removes it, any other value replaces it;

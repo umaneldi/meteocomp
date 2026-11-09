@@ -526,22 +526,21 @@ function addProvider() {
 }
 
 // ── Activity ──────────────────────────────────────────────────────────────
-async function refreshPolls() {
+async function refreshReadings() {
   try {
-    const polls = await api("GET", "/api/v1/polls?limit=25");
-    $("polls-body").replaceChildren(...polls.map((p) => h("tr", {},
-      h("td", {}, h("span", { class: "when", title: new Date(p.started_at).toLocaleString() }, relTime(p.started_at))),
-      h("td", { class: "mono" }, p.provider),
-      h("td", { class: "mono" }, p.location_name),
-      h("td", {},
-        h("span", { class: `status ${p.status}` }, p.status),
-        p.error ? h("span", { class: "poll-error", title: p.error }, p.error) : null),
-      h("td", {}, (p.kinds && p.kinds.length) ? p.kinds.join("+") : "—"),
-      h("td", { class: "num" }, p.reading_count),
-      h("td", { class: "num" }, `${(p.duration_ms / 1000).toFixed(1)} s`))));
-    $("polls-empty").hidden = polls.length > 0;
+    const readings = await api("GET", "/api/v1/readings?limit=25");
+    $("readings-body").replaceChildren(...readings.map((r) => h("tr", {},
+      h("td", {}, h("span", { class: "when", title: r.polled_at }, relTime(r.polled_at))),
+      h("td", { class: "mono" }, r.provider),
+      h("td", { class: "mono" }, r.location_name),
+      h("td", {}, r.kind),
+      h("td", {}, r.forecast_time),
+      h("td", { class: "num" }, fmtParamValue(r.temperature_c, PARAMS[0])))));
+    $("readings-empty").hidden = readings.length > 0;
+    $("readings-empty").textContent = "No readings recorded yet.";
   } catch (e) {
-    console.warn("refresh polls:", e);
+    $("readings-empty").hidden = false;
+    $("readings-empty").textContent = `Could not load readings: ${e.message}`;
   }
 }
 
@@ -550,8 +549,8 @@ async function pollNow(provider) {
     const q = provider ? `?provider=${encodeURIComponent(provider)}` : "";
     const res = await api("POST", `/api/v1/polls${q}`);
     toast(res.providers.length ? `Polling ${res.providers.join(", ")}…` : "No enabled provider to poll.");
-    setTimeout(refreshPolls, 2500);
-    setTimeout(refreshPolls, 8000);
+    setTimeout(refreshReadings, 2500);
+    setTimeout(refreshReadings, 8000);
   } catch (e) {
     toast(e.message, true);
   }
@@ -660,7 +659,7 @@ async function loadForecast() {
     const getPage = (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal);
     const [records, obsRecords] = await Promise.all([
       ForecastEvolution.loadRecords(getPage, fc.location, target),
-      ForecastEvolution.loadObservations(getPage, fc.location, target).catch(() => []),
+      ForecastEvolution.loadObservations(getPage, fc.location, target),
     ]);
     if (request !== fc.request) return;
     if (target.getTime() !== ForecastEvolution.today().getTime()) {
@@ -701,7 +700,7 @@ function coverageText(value) {
 }
 
 function pointDescription(point, value, param) {
-  return `${point.provider}; poll #${point.pollID} at ${point.polledAt}; ` +
+  return `${point.provider}; retrieved at ${point.polledAt}; ` +
     `lead ${fmtLead(point.lead)} h; ${param.label}: ${fmtParamValue(value.value, param)}; ${coverageText(value)}`;
 }
 
@@ -755,7 +754,7 @@ function renderForecastTable(wrap, data, param) {
       if (!points.length) return h("td", { class: "fc-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
       return h("td", { class: "fc-cell" }, ...points.map((point) => {
         const value = point.values[param.key];
-        if (!value) return h("div", { class: "fc-reading", title: `Poll #${point.pollID} at ${point.polledAt}` }, "—");
+        if (!value) return h("div", { class: "fc-reading", title: `Retrieved at ${point.polledAt}` }, "—");
         const color = param.unit === "°C" ? tempClass(value.value) : "mild";
         return h("div", { class: "fc-reading", title: pointDescription(point, value, param) },
           h("span", { class: `fc-temp ${color}` }, fmtParamValue(value.value, param)),
@@ -989,8 +988,8 @@ async function boot() {
     if (JSON.stringify(serialize()) !== state.baseline) e.preventDefault();
   });
 
-  refreshPolls();
-  setInterval(refreshPolls, 15000);
+  refreshReadings();
+  setInterval(refreshReadings, 15000);
 }
 
 boot();

@@ -23,7 +23,7 @@ func (f fakeProvider) Fetch(_ context.Context, loc weather.Location) ([]weather.
 	if f.fail[loc.Name] {
 		return nil, errors.New("boom")
 	}
-	return []weather.Forecast{{ForecastTime: time.Now().UTC(), Granularity: weather.GranularityHourly, Condition: weather.ConditionClear}}, nil
+	return []weather.Forecast{{ForecastTime: time.Now().UTC(), Kind: weather.KindForecast, Condition: weather.ConditionClear}}, nil
 }
 
 // syncBuffer is a goroutine-safe bytes.Buffer for capturing logs.
@@ -67,12 +67,12 @@ func TestRunPollsImmediatelyAndLogs(t *testing.T) {
 	cancel()
 	<-done
 
-	polls, err := st.ListPolls(context.Background(), store.PollFilter{})
+	readings, err := st.ListReadings(context.Background(), store.ReadingFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(polls) != 2 {
-		t.Fatalf("got %d polls, want 2", len(polls))
+	if len(readings) != 1 || readings[0].LocationName != "paris" {
+		t.Fatalf("expected only successful paris readings: %+v", readings)
 	}
 
 	out := logs.String()
@@ -99,8 +99,10 @@ func TestRunResumesFromLastPoll(t *testing.T) {
 	}
 	defer st.Close()
 	recent := time.Now().UTC().Add(-10 * time.Minute)
-	if _, err := st.RecordPoll(ctx, store.PollResult{Provider: "fake", ProviderType: "faketype",
-		Location: weather.Location{Name: "paris"}, StartedAt: recent, FinishedAt: recent}); err != nil {
+	if err := st.RecordReadings(ctx, []store.ReadingRecord{{
+		Provider: "fake", ProviderType: "faketype", LocationName: "paris", PolledAt: recent,
+		Forecast: weather.Forecast{Kind: weather.KindForecast, ForecastTime: recent.Add(time.Hour)},
+	}}); err != nil {
 		t.Fatal(err)
 	}
 

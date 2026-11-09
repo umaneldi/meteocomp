@@ -10,3 +10,5 @@ config.yaml
 check.py
 meteocomp.json
 *.bak
+*.json
+*.txt

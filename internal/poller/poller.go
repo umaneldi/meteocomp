@@ -49,15 +49,15 @@ const (
 func (p *Poller) Run(ctx context.Context) { p.RunUntil(ctx, nil) }
 
 // RunUntil polls each provider at the shared interval until ctx is done or stop
-// is closed. A provider whose last recorded poll is older than the interval (or
+// is closed. A provider whose last stored reading is older than the interval (or
 // that was never polled) is polled immediately; otherwise its schedule resumes
 // from the last poll, so restarts and settings changes do not cause extra API calls.
 // Closing stop lets in-flight polls finish; cancelling ctx aborts them.
 func (p *Poller) RunUntil(ctx context.Context, stop <-chan struct{}) {
 	p.log.Info("poller started", "providers", len(p.providers), "locations", len(p.locations), "interval", p.interval)
-	last, err := p.store.LastPollTimes(ctx)
+	last, err := p.store.LastReadingTimes(ctx)
 	if err != nil {
-		p.log.Warn("read last poll times; polling all providers now", "error", err)
+		p.log.Warn("read last reading times; polling all providers now", "error", err)
 	}
 	var wg sync.WaitGroup
 	for _, prov := range p.providers {
@@ -141,7 +141,7 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 				return failures
 			}
 			attempted++
-			res := store.PollResult{
+			res := fetchResult{
 				Provider:     prov.Name(),
 				ProviderType: prov.Type(),
 				Location:     loc,
@@ -161,8 +161,11 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 				forecasts += len(res.Forecasts)
 				log.Info("location poll ok", "forecasts", len(res.Forecasts), "duration", batchEnd.Sub(batchStart))
 			}
-			if _, err := p.store.RecordPoll(context.WithoutCancel(ctx), res); err != nil {
-				log.Error("record poll", "error", err)
+			if res.Err == nil {
+				if err := p.record(ctx, res); err != nil {
+					failures++
+					log.Error("record readings", "error", err)
+				}
 			}
 		}
 		return failures
@@ -182,18 +185,40 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 			forecasts += len(res.Forecasts)
 			log.Info("location poll ok", "forecasts", len(res.Forecasts), "duration", res.FinishedAt.Sub(res.StartedAt))
 		}
-		// Record even if ctx was cancelled mid-fetch so the attempt is not lost.
-		if _, err := p.store.RecordPoll(context.WithoutCancel(ctx), res); err != nil {
-			log.Error("record poll", "error", err)
+		if res.Err == nil {
+			if err := p.record(ctx, res); err != nil {
+				failures++
+				log.Error("record readings", "error", err)
+			}
 		}
 	}
 	return failures
 }
 
-func (p *Poller) fetch(ctx context.Context, prov weather.Provider, loc weather.Location) store.PollResult {
+type fetchResult struct {
+	Provider, ProviderType string
+	Location               weather.Location
+	StartedAt, FinishedAt  time.Time
+	Forecasts              []weather.Forecast
+	Err                    error
+}
+
+func (p *Poller) record(ctx context.Context, result fetchResult) error {
+	readings := make([]store.ReadingRecord, 0, len(result.Forecasts))
+	for _, forecast := range result.Forecasts {
+		readings = append(readings, store.ReadingRecord{
+			Provider: result.Provider, ProviderType: result.ProviderType,
+			LocationName: result.Location.Name, PolledAt: result.StartedAt,
+			Forecast: forecast,
+		})
+	}
+	return p.store.RecordReadings(context.WithoutCancel(ctx), readings)
+}
+
+func (p *Poller) fetch(ctx context.Context, prov weather.Provider, loc weather.Location) fetchResult {
 	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
-	res := store.PollResult{
+	res := fetchResult{
 		Provider:     prov.Name(),
 		ProviderType: prov.Type(),
 		Location:     loc,

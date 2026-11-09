@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +31,11 @@ func fixture() string {
     "relative_humidity_2m": [91, 80],
     "weather_code": [61, 3],
     "visibility": [12000, 8000],
-    "wind_speed_10m": [14.2, 12.0]
+    "wind_speed_10m": [14.2, 12.0],
+    "wind_gusts_10m": [25, 20],
+    "surface_pressure": [980, 981],
+    "pressure_msl": [1010, 1011],
+    "snowfall": [0, 1.4]
   },
   "daily": {
     "time": ["` + futureDay() + `"],
@@ -50,6 +55,11 @@ func TestFetch(t *testing.T) {
 		if r.URL.Query().Get("latitude") != "48.85" || r.URL.Query().Get("forecast_days") != "2" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
+		q := r.URL.Query()
+		if q.Has("daily") || q.Get("wind_speed_unit") != "kmh" || q.Get("timezone") != "UTC" ||
+			q.Get("hourly") != hourlyVars || !strings.Contains(q.Get("hourly"), "surface_pressure") {
+			t.Errorf("unexpected variables or units: %s", r.URL.RawQuery)
+		}
 		w.Write([]byte(fixture()))
 	}))
 	defer srv.Close()
@@ -62,12 +72,11 @@ func TestFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("got %d readings, want 3", len(got))
+	if len(got) != 2 {
+		t.Fatalf("got %d readings, want 2 hourly readings", len(got))
 	}
 
-	// Hourly entries come before daily in the response.
-	hPast, hFuture, d := got[0], got[1], got[2]
+	hPast, hFuture := got[0], got[1]
 
 	if hPast.Kind != weather.KindForecast {
 		t.Errorf("past hourly: expected KindForecast, got %q", hPast.Kind)
@@ -75,19 +84,14 @@ func TestFetch(t *testing.T) {
 	if hFuture.Kind != weather.KindForecast {
 		t.Errorf("future hourly: expected KindForecast, got %q", hFuture.Kind)
 	}
-	if d.Kind != weather.KindForecast {
-		t.Errorf("future daily: expected KindForecast, got %q", d.Kind)
-	}
-
-	if hPast.Granularity != weather.GranularityHourly {
-		t.Errorf("hPast granularity: %+v", hPast)
-	}
 	if *hPast.TemperatureC != 8.4 || *hPast.HumidityPct != 91 || *hPast.VisibilityKm != 12 ||
-		hPast.Condition != weather.ConditionRain || hPast.ConditionCode != "61" {
+		*hPast.PressureHPa != 980 || *hPast.WindSpeedKmh != 14.2 || *hPast.WindGustKmh != 25 ||
+		hPast.Condition != weather.ConditionRain || hPast.ConditionText != "Rain" {
 		t.Errorf("hPast values: %+v", hPast)
 	}
-	if d.Granularity != weather.GranularityDaily || *d.TemperatureMaxC != 11.2 || *d.SnowfallCm != 1.4 || d.Condition != weather.ConditionSnow {
-		t.Errorf("daily: %+v", d)
+	if hPast.SnowfallCm == nil || *hPast.SnowfallCm != 0 || hPast.DewPointC != nil ||
+		hFuture.SnowfallCm == nil || *hFuture.SnowfallCm != 1.4 {
+		t.Errorf("optional measurements: %+v, %+v", hPast, hFuture)
 	}
 }
 
@@ -123,14 +127,49 @@ func TestFetchEndpointAndModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Granularity != weather.GranularityHourly || got[1].Granularity != weather.GranularityDaily {
-		t.Fatalf("expected one hourly and one daily reading, got %+v", got)
+	if len(got) != 1 {
+		t.Fatalf("expected one nonempty hourly reading, got %+v", got)
 	}
-	// 2026-11-05 is in the future from today (2026-11-03), so both should be forecasts.
 	for _, r := range got {
 		if r.Kind != weather.KindForecast {
 			t.Errorf("expected KindForecast for future row, got %q", r.Kind)
 		}
+	}
+}
+
+func TestFetchZeroAndMissingMeasurements(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"hourly":{
+			"time":["2026-11-05T00:00","2026-11-05T01:00","2026-11-05T02:00","2026-11-05T03:00"],
+			"temperature_2m":[0,null,null,null],
+			"weather_code":[null,0,999,null],
+			"visibility":[0,null],
+			"wind_speed_10m":[0,null],
+			"precipitation_probability":[0,null]
+		}}`))
+	}))
+	defer srv.Close()
+	p, err := New(config.ProviderConfig{Name: "om", BaseURL: srv.URL}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Fetch(context.Background(), weather.Location{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d readings, want 3", len(got))
+	}
+	f := got[0]
+	for _, v := range []*float64{f.TemperatureC, f.VisibilityKm, f.WindSpeedKmh, f.PrecipitationProbabilityPct} {
+		if v == nil || *v != 0 {
+			t.Errorf("zero measurement lost: %v", v)
+		}
+	}
+	if f.FeelsLikeC != nil || f.PressureHPa != nil || f.Condition != weather.ConditionUnknown ||
+		got[1].Condition != weather.ConditionClear || got[1].TemperatureC != nil ||
+		got[2].Condition != weather.ConditionUnknown {
+		t.Errorf("missing measurements or condition-only rows: %+v", got)
 	}
 }
 
@@ -141,4 +180,3 @@ func TestInvalidEndpoint(t *testing.T) {
 		}
 	}
 }
-

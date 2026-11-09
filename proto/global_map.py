@@ -5,7 +5,7 @@ import requests
 from pydantic import BaseModel
 
 
-class Forecast(BaseModel):
+class Reading(BaseModel):
     provider: str
     provider_type: str  # Identification of the provider type (e.g., "weatherapi", "openweathermap") to use the right API call
 
@@ -54,7 +54,7 @@ def poll_weatherapi():
     ret_forecast = None
     for d in dat["forecast"]["forecastday"]:
         for c in d["hour"]:
-            forecast: Forecast = Forecast(
+            forecast: Reading = Reading(
                 provider="weatherapi",
                 provider_type="weatherapi",
                 location_name="castanet-tolosan",
@@ -101,7 +101,7 @@ def poll_openweathermap():
 
     ret_forecast = None
     for c in dat["list"]:
-        forecast = Forecast(
+        forecast = Reading(
             provider="owm",
             provider_type="openweathermap",
             location_name="castanet-tolosan",
@@ -165,7 +165,7 @@ def poll_infoclimat():
 
     ret_forecast = None
     for c in dat["hourly"]["000PU"]:
-        forecast = Forecast(
+        forecast = Reading(
             provider="infoclimat",
             provider_type="infoclimat",
             location_name="castanet-tolosan",
@@ -251,7 +251,7 @@ def poll_openmeteo():
         weather_code,
         time,
     ) in zip(*[dat["hourly"][v] for v in vars], dat["hourly"]["time"]):
-        forecast: Forecast = Forecast(
+        forecast: Reading = Reading(
             provider="openmeteo",
             provider_type="openmeteo",
             location_name="castanet-tolosan",
