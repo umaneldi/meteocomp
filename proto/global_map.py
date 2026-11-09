@@ -12,13 +12,10 @@ class Forecast(BaseModel):  # type: ignore
     location_name: str  # TEXT    NOT NULL,
 
     forecast_time: datetime  # TEXT    NOT NULL,  -- UTC start of the covered period
-    granularity: str  # TEXT    NOT NULL,  -- hourly | 3h | daily
     lead_time_hours: float  # REAL    NOT NULL,  -- forecast_time - polled_at (negative for observations)
     kind: str  # TEXT    NOT NULL CHECK (kind IN ('forecast', 'observation')) DEFAULT 'forecast',
 
     temperature_c: float
-    temperature_min_c: float
-    temperature_max_c: float
     feels_like_c: float
     humidity_pct: float
     dew_point_c: float
@@ -27,10 +24,8 @@ class Forecast(BaseModel):  # type: ignore
     wind_gust_kmh: float
     wind_direction_deg: float
     cloud_cover_pct: float
-    precipitation_mm: float
     precipitation_probability_pct: float
     snowfall_cm: float
-    uv_index: float
     visibility_km: float
 
     condition: str  # TEXT    NOT NULL,  -- normalized, see weather.Condition
@@ -56,6 +51,7 @@ def poll_weatherapi():
     with open("weatherapi_current.json", "w") as f:
         json.dump(dat, f, indent=4)
 
+    ret_forecast = None
     for d in dat["forecast"]["forecastday"]:
         for c in d["hour"]:
             forecast: Forecast = Forecast(
@@ -64,8 +60,6 @@ def poll_weatherapi():
                 location_name="castanet-tolosan",
                 forecast_time=datetime.fromisoformat(c["time"]),
                 temperature_c=c["temp_c"],
-                temperature_min_c=-99999.0,
-                temperature_max_c=-99999.0,
                 feels_like_c=c["feelslike_c"],
                 humidity_pct=c["humidity"],
                 dew_point_c=c["dewpoint_c"],
@@ -74,22 +68,21 @@ def poll_weatherapi():
                 wind_gust_kmh=c["gust_kph"],
                 wind_direction_deg=c["wind_degree"],
                 cloud_cover_pct=c["cloud"],
-                precipitation_mm=c["precip_mm"],
                 precipitation_probability_pct=c["chance_of_rain"],
                 snowfall_cm=c["snow_cm"],
-                uv_index=c["uv"],
                 visibility_km=c["vis_km"],
                 condition=c["condition"]["text"],
                 condition_text=c["condition"]["text"],
                 created_at=datetime.now(),
-                granularity="hourly",
                 lead_time_hours=(
                     datetime.fromisoformat(c["time"]) - datetime.now()
                 ).total_seconds()
                 / 3600,
                 kind="forecast",
             )
-            print(forecast)
+            ret_forecast = forecast
+
+    return ret_forecast
 
 
 def poll_openweathermap():
@@ -106,21 +99,19 @@ def poll_openweathermap():
     with open("openweathermap_forecast.json", "w") as f:
         json.dump(dat, f, indent=4)
 
+    ret_forecast = None
     for c in dat["list"]:
         forecast = Forecast(
             provider="owm",
             provider_type="openweathermap",
             location_name="castanet-tolosan",
             forecast_time=datetime.fromisoformat(c["dt_txt"]),
-            granularity="3h",
             lead_time_hours=(
                 datetime.fromisoformat(c["dt_txt"]) - datetime.now()
             ).total_seconds()
             / 3600,
             kind="forecast",
             temperature_c=c["main"]["temp"] - 273.15,
-            temperature_min_c=c["main"]["temp_min"] - 273.15,
-            temperature_max_c=c["main"]["temp_max"] - 273.15,
             feels_like_c=c["main"]["feels_like"] - 273.15,
             humidity_pct=c["main"]["humidity"],
             dew_point_c=-99999.0,
@@ -133,18 +124,12 @@ def poll_openweathermap():
             ),
             wind_direction_deg=c["wind"]["deg"],
             cloud_cover_pct=c["clouds"]["all"],
-            precipitation_mm=(
-                c.get("rain", {}).get("3h")
-                if c.get("rain") and c["rain"].get("3h")
-                else -99999.0
-            ),
             precipitation_probability_pct=-99999.0,
             snowfall_cm=(
                 c.get("snow", {}).get("3h")
                 if c.get("snow") and c["snow"].get("3h")
                 else -99999.0
             ),
-            uv_index=-99999.0,
             visibility_km=(
                 c.get("visibility") / 1000.0 if c.get("visibility") else -99999.0
             ),
@@ -156,7 +141,9 @@ def poll_openweathermap():
             ),
             created_at=datetime.now(),
         )
-        print(forecast)
+        ret_forecast = forecast
+
+    return ret_forecast
 
 
 def poll_infoclimat():
@@ -176,28 +163,20 @@ def poll_infoclimat():
     with open("infoclimat.json", "w") as f:
         json.dump(dat, f, indent=4)
 
+    ret_forecast = None
     for c in dat["hourly"]["000PU"]:
         forecast = Forecast(
             provider="infoclimat",
             provider_type="infoclimat",
             location_name="castanet-tolosan",
             forecast_time=datetime.fromisoformat(c["dh_utc"]),
-            granularity="15min",
             lead_time_hours=(
                 datetime.fromisoformat(c["dh_utc"]) - datetime.now()
             ).total_seconds()
             / 3600,
             kind="observation",
-            temperature_c=(
-                c["temperature"] - 273.15 if c.get("temperature") else -99999.0
-            ),
-            temperature_min_c=(
-                c["temperature_min"] - 273.15 if c.get("temperature_min") else -99999.0
-            ),
-            temperature_max_c=(
-                c["temperature_max"] - 273.15 if c.get("temperature_max") else -99999.0
-            ),
-            feels_like_c=c["feels_like"] - 273.15 if c.get("feels_like") else -99999.0,
+            temperature_c=(c["temperature"] if c.get("temperature") else -99999.0),
+            feels_like_c=c["feels_like"] if c.get("feels_like") else -99999.0,
             humidity_pct=c["humidite"],
             dew_point_c=-99999.0,
             wind_direction_deg=(
@@ -211,12 +190,10 @@ def poll_infoclimat():
                 else -99999.0
             ),
             cloud_cover_pct=-99999.0,
-            precipitation_mm=c.get("pluie_3h", 0.0) if c.get("pluie_3h") else -99999.0,
             precipitation_probability_pct=-99999.0,
             snowfall_cm=(
                 c.get("pluie_neige_3h", 0.0) if c.get("pluie_neige_3h") else -99999.0
             ),
-            uv_index=-99999.0,
             visibility_km=(
                 c.get("visibilite", 0.0) / 1000.0 if c.get("visibilite") else -99999.0
             ),
@@ -224,9 +201,95 @@ def poll_infoclimat():
             condition_text="",
             created_at=datetime.now(),
         )
-        print(forecast)
+        ret_forecast = forecast
+
+    return ret_forecast
 
 
-poll_weatherapi()
-poll_openweathermap()
-poll_infoclimat()
+def poll_openmeteo():
+    vars = [
+        "temperature_2m",
+        "apparent_temperature",
+        "relative_humidity_2m",
+        "dew_point_2m",
+        "surface_pressure",
+        "wind_gusts_10m",
+        "wind_direction_10m",
+        "wind_speed_10m",
+        "cloud_cover",
+        "precipitation_probability",
+        "snowfall",
+        "weather_code",
+    ]
+    res = requests.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": "43.5167",
+            "longitude": "1.5",
+            "hourly": ",".join(vars),
+            "models": "ecmwf_ifs",
+            "forecast_days": "10",
+        },
+    )
+    dat = res.json()
+    with open("openmeteo.json", "w") as f:
+        json.dump(dat, f, indent=4)
+
+    ret_forecast = None
+    for (
+        temperature_2m,
+        apparent_temperature,
+        relative_humidity_2m,
+        dew_point_2m,
+        surface_pressure,
+        wind_gusts_10m,
+        wind_direction_10m,
+        wind_speed_10m,
+        cloud_cover,
+        precipitation_probability,
+        snowfall,
+        weather_code,
+        time,
+    ) in zip(*[dat["hourly"][v] for v in vars], dat["hourly"]["time"]):
+        forecast: Forecast = Forecast(
+            provider="openmeteo",
+            provider_type="openmeteo",
+            location_name="castanet-tolosan",
+            forecast_time=datetime.fromisoformat(time),
+            lead_time_hours=(
+                datetime.fromisoformat(time) - datetime.now()
+            ).total_seconds()
+            / 3600,
+            kind="forecast",
+            temperature_c=temperature_2m,
+            feels_like_c=apparent_temperature,
+            humidity_pct=relative_humidity_2m,
+            dew_point_c=dew_point_2m,
+            wind_direction_deg=wind_direction_10m,
+            pressure_hpa=surface_pressure,
+            wind_speed_kmh=wind_speed_10m * 3.6,
+            wind_gust_kmh=wind_gusts_10m * 3.6,
+            cloud_cover_pct=cloud_cover,
+            precipitation_probability_pct=precipitation_probability,
+            snowfall_cm=snowfall,
+            visibility_km=-99999.0,
+            condition="",
+            condition_text="",
+            created_at=datetime.now(),
+        )
+        ret_forecast = forecast
+
+    return ret_forecast
+
+
+f = poll_weatherapi()
+print(f)
+
+f = poll_openweathermap()
+print(f)
+
+f = poll_infoclimat()
+print(f)
+
+f = poll_openmeteo()
+print(f)
