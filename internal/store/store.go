@@ -35,9 +35,11 @@ type ReadingFilter struct {
 	Provider   string
 	Location   string
 	Kind       string
-	From, To   time.Time
-	PolledFrom time.Time
-	PolledTo   time.Time
+	From, To         time.Time
+	PolledFrom       time.Time
+	PolledTo         time.Time
+	ForecastTime     time.Time
+	ForecastTimeDelta time.Duration
 	Limit      int
 	Offset     int
 }

@@ -129,6 +129,14 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	if !f.To.IsZero() {
 		w.add("forecast_time < ?", formatTime(f.To))
 	}
+	if !f.ForecastTime.IsZero() {
+		delta := f.ForecastTimeDelta
+		if delta == 0 {
+			delta = 30 * time.Minute
+		}
+		w.add("forecast_time >= ?", formatTime(f.ForecastTime.Add(-delta)))
+		w.add("forecast_time < ?", formatTime(f.ForecastTime.Add(delta)))
+	}
 	if !f.PolledFrom.IsZero() {
 		w.add("polled_at >= ?", formatTime(f.PolledFrom))
 	}

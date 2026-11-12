@@ -176,6 +176,24 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if v := q.Get("forecast_time"); v != "" {
+		if f.ForecastTime, err = time.Parse(time.RFC3339, v); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_time: expected RFC3339 time, got %q", v))
+			return
+		}
+	}
+	if v := q.Get("forecast_timedelta"); v != "" {
+		mins, err2 := strconv.Atoi(v)
+		if err2 != nil || mins <= 0 {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_timedelta: expected positive integer (minutes)"))
+			return
+		}
+		f.ForecastTimeDelta = time.Duration(mins) * time.Minute
+	}
+	if f.ForecastTimeDelta != 0 && f.ForecastTime.IsZero() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_timedelta requires forecast_time"))
+		return
+	}
 	out, err := s.store.ListReadings(r.Context(), f)
 	if err != nil {
 		s.internalError(w, err)
