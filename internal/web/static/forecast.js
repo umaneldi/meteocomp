@@ -150,5 +150,67 @@ const ForecastEvolution = (() => {
     };
   }
 
-  return { params, today, loadRecords, loadObservations, buildObservation, build };
+  async function findLatestObsTime(getPage, location) {
+    const query = new URLSearchParams({ kind: "observation", location, limit: "500" });
+    const page = await getPage(query);
+    if (!Array.isArray(page) || !page.length) return null;
+    let best = null;
+    for (const r of page) {
+      if (!best || r.forecast_time > best.forecast_time) best = r;
+    }
+    return { forecastTime: new Date(best.forecast_time), provider: best.provider };
+  }
+
+  async function loadLeadRecords(getPage, location, forecastTime, kind, pageSize = 500) {
+    const ft = forecastTime instanceof Date
+      ? forecastTime.toISOString().slice(0, 19) + "Z"
+      : String(forecastTime);
+    const query = new URLSearchParams({
+      kind, location, forecast_time: ft,
+      limit: String(pageSize), offset: "0",
+    });
+    const records = [];
+    for (;;) {
+      const page = await getPage(query);
+      if (!Array.isArray(page) || page.length > pageSize) throw new Error("Invalid readings response");
+      records.push(...page);
+      if (page.length < pageSize) return records;
+      query.set("offset", String(records.length));
+    }
+  }
+
+  function buildLeadSeries(forecastRecords, obsRecords, paramKey) {
+    const fcByProvider = new Map();
+    for (const r of forecastRecords) {
+      const v = r[paramKey];
+      if (v == null) continue;
+      if (!fcByProvider.has(r.provider)) fcByProvider.set(r.provider, []);
+      fcByProvider.get(r.provider).push({ x: r.lead_time_hours, y: v });
+    }
+    const series = [...fcByProvider.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, points]) => ({ provider, points: points.sort((a, b) => a.x - b.x) }));
+
+    const obsByProvider = new Map();
+    for (const r of obsRecords) {
+      const v = r[paramKey];
+      if (v == null) continue;
+      const prev = obsByProvider.get(r.provider);
+      if (!prev || r.forecast_time > prev.forecast_time) obsByProvider.set(r.provider, r);
+    }
+    const obsSeries = [...obsByProvider.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, r]) => ({ provider, y: r[paramKey] }));
+
+    let xMin = Infinity, xMax = -Infinity;
+    for (const s of series) for (const p of s.points) {
+      xMin = Math.min(xMin, p.x);
+      xMax = Math.max(xMax, p.x);
+    }
+    if (!Number.isFinite(xMin)) { xMin = 0; xMax = 0; }
+
+    return { series, obsSeries, xMin, xMax };
+  }
+
+  return { params, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, buildLeadSeries };
 })();

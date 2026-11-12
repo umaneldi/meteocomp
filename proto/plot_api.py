@@ -1,36 +1,19 @@
-from datetime import datetime, timedelta, timezone, UTC
+from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 
 
-def get_by_kind(
-    kind: str,
-    forecast_timedelta: int = 90,
-    forecast_time: None | datetime = None,
-    location: None | str = None,
-):
-    # API query parameters: `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to`, `forecast_time` (RFC3339), `forecast_timedelta` (minutes, default 30), `limit`, `offset`
-    # data[0] =
-    # {'provider': 'infoclimat', 'provider_type': 'infoclimat', 'location_name': 'castanet-tolosan', 'lead_time_hours': -51.923611111111114, 'polled_at': '2026-11-12T07:40:25Z', 'kind': 'observation', 'forecast_time': '2026-11-10T03:45:00Z', 'temperature_c': 15, 'feels_like_c': None, 'humidity_pct': 92, 'dew_point_c': 13.7, 'pressure_hpa': 1010.4, 'wind_speed_kmh': 0.8, 'wind_gust_kmh': 4.8, 'wind_direction_deg': 158, 'cloud_cover_pct': None, 'precipitation_probability_pct': None, 'snowfall_cm': None, 'visibility_km': None, 'condition': 'unknown', 'condition_text': ''}
-    limit = 500
+def paginated_records(
+    url: str, params: dict[str, Any], limit: int = 500, **kwargs
+) -> list[dict[str, Any]]:
     offset = 0
-    all_data = []
-    dt = datetime.now(UTC) if forecast_time is None else forecast_time
-    sdt = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    all_data: list[dict[str, Any]] = []
     while True:
         res = requests.get(
-            "http://localhost:8777/api/v1/readings",
-            auth=("test", "test"),
-            params={
-                "kind": kind,
-                "forecast_timedelta": forecast_timedelta,
-                "forecast_time": sdt,
-                **({"location": location} if location is not None else {}),
-                "limit": limit,
-                "offset": offset,
-            },
+            url, params={**params, "limit": limit, "offset": offset}, **kwargs
         )
         page = res.json()
         if not page:
@@ -39,36 +22,58 @@ def get_by_kind(
         if len(page) < limit:
             break
         offset += limit
+    return all_data
+
+
+def get_by_kind(
+    kind: str,
+    location: str,
+    forecast_time: None | datetime = None,
+):
+    dt = datetime.now(UTC) if forecast_time is None else forecast_time
+    sdt = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    all_data = paginated_records(
+        url="http://localhost:8777/api/v1/readings",
+        auth=("test", "test"),
+        params={
+            "kind": kind,
+            "forecast_time": sdt,
+            "location": location,
+        },
+    )
 
     df = pd.DataFrame(all_data)
     df["forecast_time"] = pd.to_datetime(df["forecast_time"], utc=True)
 
-    closest_ft = df["forecast_time"].unique()
-    closest_ft = closest_ft[abs(closest_ft - dt).argmin()]
-    df = df[df["forecast_time"] == closest_ft]
-
-    return df
+    return df.sort_values("lead_time_hours")
 
 
-observations = get_by_kind(kind="observation", forecast_timedelta=90)
-latest_idx = observations.groupby("location_name")["forecast_time"].idxmax()
-stations_ft = [
-    (row["location_name"], row["forecast_time"].to_pydatetime())
-    for _, row in observations.loc[latest_idx][
-        ["location_name", "forecast_time"]
-    ].iterrows()
-]
+def get_latest_observations():
+    all_data = paginated_records(
+        url="http://localhost:8777/api/v1/locations",
+        auth=("test", "test"),
+        params={
+            "latest": "true",
+        },
+    )
+    return all_data
 
 
-station_name, station_ft = stations_ft[0]
+stations_ft = get_latest_observations()
+
+station_name, station_ft = stations_ft[0]["name"], datetime.fromisoformat(
+    stations_ft[0]["latest_forecast_time"]
+)
 df = get_by_kind(
     kind="forecast",
     location=station_name,
     forecast_time=station_ft,
-    forecast_timedelta=90,
 )
-# df.to_csv("df.csv", index=False)
-# exit(0)
+observations = get_by_kind(
+    kind="observation",
+    location=station_name,
+    forecast_time=station_ft,
+)
 
 x_min, x_max = df["lead_time_hours"].min(), df["lead_time_hours"].max()
 
@@ -89,10 +94,8 @@ tick_text = [fmt_lead(v) for v in tick_vals]
 
 MARKERS = ["circle", "square", "diamond", "triangle-up", "cross", "star", "hexagon"]
 
-obs_df = observations[observations["location_name"] == station_name].sort_values(
-    "lead_time_hours"
-)
-# obs_df.to_csv("obs_df.csv", index=False)
+# df.to_csv("df.csv", index=False)
+# observations.to_csv("obs_df.csv", index=False)
 # exit(0)
 
 fig = go.Figure()
@@ -112,7 +115,7 @@ for provider, group in df.groupby("provider"):
         )
     )
 
-for provider, group in obs_df.groupby("provider"):
+for provider, group in observations.groupby("provider"):
     for _, row in group.iterrows():
         fig.add_trace(
             go.Scatter(

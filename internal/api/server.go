@@ -85,8 +85,31 @@ func (s *Server) listProviders(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) listLocations(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.Settings().Locations)
+type locationView struct {
+	weather.Location
+	LatestForecastTime *time.Time `json:"latest_forecast_time"`
+}
+
+func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
+	locs := s.Settings().Locations
+	if r.URL.Query().Get("latest") != "true" {
+		writeJSON(w, http.StatusOK, locs)
+		return
+	}
+	times, err := s.store.LatestObservationTimes(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	out := make([]locationView, len(locs))
+	for i, loc := range locs {
+		var ft *time.Time
+		if t, ok := times[loc.Name]; ok {
+			ft = &t
+		}
+		out[i] = locationView{Location: loc, LatestForecastTime: ft}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // triggerPoll starts an immediate poll of one provider (?provider=name) or all
@@ -185,18 +208,6 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_time: expected RFC3339 time, got %q", v))
 			return
 		}
-	}
-	if v := q.Get("forecast_timedelta"); v != "" {
-		mins, err2 := strconv.Atoi(v)
-		if err2 != nil || mins <= 0 {
-			writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_timedelta: expected positive integer (minutes)"))
-			return
-		}
-		f.ForecastTimeDelta = time.Duration(mins) * time.Minute
-	}
-	if f.ForecastTimeDelta != 0 && f.ForecastTime.IsZero() {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_timedelta requires forecast_time"))
-		return
 	}
 	out, err := s.store.ListReadings(r.Context(), f)
 	if err != nil {

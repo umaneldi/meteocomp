@@ -195,9 +195,9 @@ a throwaway schema in that database.
 | PUT    | `/api/v1/settings`   | replace settings (see below) |
 | GET    | `/api/v1/provider-types` | available provider types, options and whether they need a key |
 | GET    | `/api/v1/providers`  | |
-| GET    | `/api/v1/locations`  | |
+| GET    | `/api/v1/locations`  | `latest=true` — returns configured locations augmented with a `latest_forecast_time` field: the greatest observation `forecast_time` for that location (`null` if none). Default omits the field and skips the readings table. |
 | POST   | `/api/v1/polls`      | `provider` (optional) — trigger an immediate poll |
-| GET    | `/api/v1/readings`   | `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `forecast_time` (RFC3339), `forecast_timedelta` (minutes), `limit`, `offset` |
+| GET    | `/api/v1/readings`   | `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `forecast_time` (RFC3339), `limit`, `offset` |
 | GET    | `/api/v1/stations`   | `q` (min 2 chars) — search Infoclimat stations by ID or name |
 
 `limit` defaults to 500 (max 10000).
@@ -207,11 +207,9 @@ breakers. Paginate with `limit` and a non-negative `offset` (default 0), increas
 offset by each page's length until a short or empty page. Keep all filters unchanged and
 use a fixed `polled_to` cutoff to exclude later retrievals. Offset pagination is not a
 database snapshot: an in-flight fetch started before the cutoff can still add rows.
-`forecast_time` (RFC3339) filters readings to a symmetric window around that timestamp:
-`forecast_time − delta ≤ reading.forecast_time < forecast_time + delta`. `forecast_timedelta`
-sets the half-width in minutes (default 30). This is useful for comparing how different
-providers forecast the same moment across varying lead times. `forecast_timedelta` without
-`forecast_time` returns `400`.
+`forecast_time` (RFC3339) filters readings to the single closest `forecast_time` per
+`(provider, location)` pair. This is useful for comparing how different providers forecast
+the same moment across varying lead times.
 
 The removed `order`, `before_id`, `poll_id` and `granularity` parameters return `400`.
 The former `GET /api/v1/polls` endpoint is removed; `POST` still triggers a fetch.

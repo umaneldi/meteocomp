@@ -68,9 +68,9 @@ forecasts from observations. Lead times refer to our retrieval clock, not the mo
 API pagination uses `limit` and `offset`, ordered by retrieval time descending with
 field-based tie breakers. Keep filters and a `polled_to` cutoff fixed across pages.
 Concurrent insertion of an older in-flight retrieval can still shift offsets.
-Use `forecast_time` (RFC3339) with `forecast_timedelta` (minutes, default 30) to narrow
-results to a ±N-minute window around a target time — useful for isolating how every
-provider's forecast for a single moment evolved over different lead times.
+Use `forecast_time` (RFC3339) to keep only the reading with the closest `forecast_time`
+per `(provider, location)` — useful for isolating how every provider's forecast for a
+single moment evolved over different lead times.
 The chart groups readings by provider and retrieval time, derives daily summaries from
 sub-daily values, and flags incomplete coverage. Same-second retrievals share a group.
 

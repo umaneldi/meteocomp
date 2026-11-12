@@ -12,3 +12,4 @@ meteocomp.json
 *.json
 *.txt
 meteocomp-settings.yaml
+*.csv

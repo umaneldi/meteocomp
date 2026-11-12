@@ -13,6 +13,9 @@ type Store interface {
 	// RecordReadings appends a provider/location snapshot atomically.
 	RecordReadings(ctx context.Context, readings []ReadingRecord) error
 	ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error)
+	// LatestObservationTimes returns a map from location_name to the greatest
+	// forecast_time found among kind=observation readings for that location.
+	LatestObservationTimes(ctx context.Context) (map[string]time.Time, error)
 	// LastReadingTimes returns the latest retrieval time per provider instance.
 	LastReadingTimes(ctx context.Context) (map[string]time.Time, error)
 	LoadSettings(ctx context.Context) (s *config.Settings, found bool, err error)
@@ -32,14 +35,13 @@ type ReadingRecord struct {
 
 // ReadingFilter selects readings. Time ranges are inclusive/exclusive.
 type ReadingFilter struct {
-	Provider   string
-	Location   string
-	Kind       string
-	From, To         time.Time
-	PolledFrom       time.Time
-	PolledTo         time.Time
-	ForecastTime     time.Time
-	ForecastTimeDelta time.Duration
-	Limit      int
-	Offset     int
+	Provider     string
+	Location     string
+	Kind         string
+	From, To     time.Time
+	PolledFrom   time.Time
+	PolledTo     time.Time
+	ForecastTime time.Time
+	Limit        int
+	Offset       int
 }

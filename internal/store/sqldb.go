@@ -15,6 +15,13 @@ const timeLayout = "2006-01-02T15:04:05Z"
 func formatTime(t time.Time) string         { return t.UTC().Format(timeLayout) }
 func parseTime(s string) (time.Time, error) { return time.Parse(timeLayout, s) }
 
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
 type SQLDB struct {
 	db *sql.DB
 	d  dialect
@@ -88,6 +95,28 @@ func (w *where) String() string {
 	return " WHERE " + strings.Join(w.conds, " AND ")
 }
 
+func (s *SQLDB) LatestObservationTimes(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT location_name, MAX(forecast_time) FROM readings WHERE kind = 'observation' GROUP BY location_name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]time.Time)
+	for rows.Next() {
+		var loc, ts string
+		if err := rows.Scan(&loc, &ts); err != nil {
+			return nil, err
+		}
+		t, err := parseTime(ts)
+		if err != nil {
+			return nil, err
+		}
+		out[loc] = t
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLDB) LastReadingTimes(ctx context.Context) (map[string]time.Time, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT provider, MAX(polled_at) FROM readings GROUP BY provider")
 	if err != nil {
@@ -129,14 +158,6 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	if !f.To.IsZero() {
 		w.add("forecast_time < ?", formatTime(f.To))
 	}
-	if !f.ForecastTime.IsZero() {
-		delta := f.ForecastTimeDelta
-		if delta == 0 {
-			delta = 30 * time.Minute
-		}
-		w.add("forecast_time >= ?", formatTime(f.ForecastTime.Add(-delta)))
-		w.add("forecast_time < ?", formatTime(f.ForecastTime.Add(delta)))
-	}
 	if !f.PolledFrom.IsZero() {
 		w.add("polled_at >= ?", formatTime(f.PolledFrom))
 	}
@@ -146,7 +167,9 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	// Include all fields in the ordering: rows tied on these values are identical.
 	q := "SELECT " + readingColumns + " FROM readings" + w.String() +
 		" ORDER BY polled_at DESC, " + strings.TrimSuffix(readingColumns, ", polled_at")
-	if f.Limit > 0 {
+	// When ForecastTime is set we fetch all matching rows and filter in Go, so LIMIT/OFFSET
+	// must not be applied to the SQL query.
+	if f.Limit > 0 && f.ForecastTime.IsZero() {
 		q += fmt.Sprintf(" LIMIT %d OFFSET %d", f.Limit, f.Offset)
 	}
 	rows, err := s.db.QueryContext(ctx, s.d.rebind(q), w.args...)
@@ -154,7 +177,7 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 		return nil, err
 	}
 	defer rows.Close()
-	out := []ReadingRecord{}
+	all := []ReadingRecord{}
 	for rows.Next() {
 		var r ReadingRecord
 		var polledAt, forecastTime string
@@ -173,7 +196,49 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 		if r.ForecastTime, err = parseTime(forecastTime); err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		all = append(all, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if f.ForecastTime.IsZero() {
+		return all, nil
+	}
+	// Find the globally closest forecast_time to the target.
+	// All returned rows must share that single forecast_time value.
+	// On exact ties (equidistant before and after), prefer the earlier timestamp.
+	target := f.ForecastTime.UTC()
+	var globalMinDiff time.Duration = -1
+	for _, r := range all {
+		if d := absDuration(r.ForecastTime.UTC().Sub(target)); globalMinDiff < 0 || d < globalMinDiff {
+			globalMinDiff = d
+		}
+	}
+	var closestFT time.Time
+	for _, r := range all {
+		if absDuration(r.ForecastTime.UTC().Sub(target)) != globalMinDiff {
+			continue
+		}
+		if ft := r.ForecastTime.UTC(); closestFT.IsZero() || ft.Before(closestFT) {
+			closestFT = ft
+		}
+	}
+	out := all[:0]
+	for _, r := range all {
+		if r.ForecastTime.UTC().Equal(closestFT) {
+			out = append(out, r)
+		}
+	}
+	if f.Limit > 0 {
+		start := f.Offset
+		if start > len(out) {
+			start = len(out)
+		}
+		end := start + f.Limit
+		if end > len(out) {
+			end = len(out)
+		}
+		out = out[start:end]
+	}
+	return out, nil
 }
