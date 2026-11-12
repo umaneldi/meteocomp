@@ -700,14 +700,16 @@ async function loadForecast() {
 
   try {
     if (fc.view === "chart") {
-      const obsRef = await ForecastEvolution.findLatestObsTime(getPage, fc.location);
+      const locsWithLatest = await api("GET", "/api/v1/locations?latest=true", undefined, controller.signal);
       if (request !== fc.request) return;
-      if (!obsRef) {
+      const locEntry = Array.isArray(locsWithLatest) ? locsWithLatest.find((l) => l.name === fc.location) : null;
+      const rawFt = locEntry?.latest_forecast_time;
+      if (!rawFt) {
         wrap.replaceChildren(h("p", { class: "empty" }, "No observations yet for this location."));
         fc.controller = null;
         return;
       }
-      const stationFt = obsRef.forecastTime;
+      const stationFt = new Date(rawFt);
       $("fc-target-date").textContent = `Reference: ${stationFt.toISOString().slice(0, 16).replace("T", " ")} UTC`;
       const [fcRecs, obsRecs] = await Promise.all([
         ForecastEvolution.loadLeadRecords(getPage, fc.location, stationFt, "forecast"),
