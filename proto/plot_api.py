@@ -9,6 +9,7 @@ def get_by_kind(
     kind: str,
     forecast_timedelta: int = 90,
     forecast_time: None | datetime = None,
+    location: None | str = None,
 ):
     # API query parameters: `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to`, `forecast_time` (RFC3339), `forecast_timedelta` (minutes, default 30), `limit`, `offset`
     # data[0] =
@@ -17,7 +18,7 @@ def get_by_kind(
     offset = 0
     all_data = []
     dt = datetime.now(UTC) if forecast_time is None else forecast_time
-    now = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    sdt = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     while True:
         res = requests.get(
             "http://localhost:8777/api/v1/readings",
@@ -25,7 +26,8 @@ def get_by_kind(
             params={
                 "kind": kind,
                 "forecast_timedelta": forecast_timedelta,
-                "forecast_time": now,
+                "forecast_time": sdt,
+                **({"location": location} if location is not None else {}),
                 "limit": limit,
                 "offset": offset,
             },
@@ -41,10 +43,13 @@ def get_by_kind(
     df = pd.DataFrame(all_data)
     df["forecast_time"] = pd.to_datetime(df["forecast_time"], utc=True)
 
+    closest_ft = df["forecast_time"].unique()
+    closest_ft = closest_ft[abs(closest_ft - dt).argmin()]
+    df = df[df["forecast_time"] == closest_ft]
+
     return df
 
 
-df_all = get_by_kind(kind="forecast", forecast_timedelta=90)
 observations = get_by_kind(kind="observation", forecast_timedelta=90)
 latest_idx = observations.groupby("location_name")["forecast_time"].idxmax()
 stations_ft = [
@@ -55,26 +60,15 @@ stations_ft = [
 ]
 
 
-def analyse_station(
-    station_name: str, forecast_time: datetime, forecast_timedelta: int = 90
-):
-    print(
-        f"Analyse pour {station_name} à {forecast_time} avec un délai de prévision de {forecast_timedelta} minutes"
-    )
-    ft_min = forecast_time - timedelta(minutes=forecast_timedelta)
-    ft_max = forecast_time + timedelta(minutes=forecast_timedelta)
-    mask = (
-        (df_all["location_name"] == station_name)
-        & (df_all["forecast_time"] >= ft_min)
-        & (df_all["forecast_time"] < ft_max)
-    )
-    return df_all[mask].copy()
-
-
 station_name, station_ft = stations_ft[0]
-df = analyse_station(
-    station_name=station_name, forecast_time=station_ft, forecast_timedelta=90
+df = get_by_kind(
+    kind="forecast",
+    location=station_name,
+    forecast_time=station_ft,
+    forecast_timedelta=90,
 )
+# df.to_csv("df.csv", index=False)
+# exit(0)
 
 x_min, x_max = df["lead_time_hours"].min(), df["lead_time_hours"].max()
 
@@ -98,6 +92,8 @@ MARKERS = ["circle", "square", "diamond", "triangle-up", "cross", "star", "hexag
 obs_df = observations[observations["location_name"] == station_name].sort_values(
     "lead_time_hours"
 )
+# obs_df.to_csv("obs_df.csv", index=False)
+# exit(0)
 
 fig = go.Figure()
 marker_idx = 0
