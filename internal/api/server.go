@@ -177,7 +177,11 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if v := q.Get("forecast_time"); v != "" {
-		if f.ForecastTime, err = time.Parse(time.RFC3339, v); err != nil {
+		f.ForecastTime, err = time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			f.ForecastTime, err = time.Parse(time.RFC3339, v)
+		}
+		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("forecast_time: expected RFC3339 time, got %q", v))
 			return
 		}

@@ -41,12 +41,40 @@ function setTab(name) {
 const PARAMS = ForecastEvolution.params;
 
 const CHART_COLORS = ["#e8590c","#1c7ed6","#2f9e44","#9c36b5","#f08c00","#0c8599","#e03131","#364fc7"];
+const MARKER_SHAPES = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function svgEl(tag, attrs = {}) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v));
   return el;
+}
+
+function svgMarker(shape, cx, cy, r, attrs = {}) {
+  if (shape === "circle") return svgEl("circle", { cx, cy, r, ...attrs });
+  let d;
+  switch (shape) {
+    case "square":
+      d = `M${cx - r} ${cy - r} h${2 * r} v${2 * r} h${-2 * r} Z`;
+      break;
+    case "diamond":
+      d = `M${cx} ${cy - r * 1.2} L${cx + r * 1.2} ${cy} L${cx} ${cy + r * 1.2} L${cx - r * 1.2} ${cy} Z`;
+      break;
+    case "triangle-up":
+      d = `M${cx} ${cy - r} L${cx + r * 0.866} ${cy + r * 0.5} L${cx - r * 0.866} ${cy + r * 0.5} Z`;
+      break;
+    case "cross": {
+      const t = r * 0.4;
+      d = `M${cx - r} ${cy - t} H${cx + r} V${cy + t} H${cx - r} Z M${cx - t} ${cy - r} V${cy + r} H${cx + t} V${cy - r} Z`;
+      break;
+    }
+    case "triangle-down":
+      d = `M${cx} ${cy + r} L${cx + r * 0.866} ${cy - r * 0.5} L${cx - r * 0.866} ${cy - r * 0.5} Z`;
+      break;
+    default:
+      return svgEl("circle", { cx, cy, r, ...attrs });
+  }
+  return svgEl("path", { d, ...attrs });
 }
 
 function fmtParamValue(v, param) {
@@ -710,6 +738,14 @@ function fmtLead(lead) {
   return String(Number(lead.toFixed(6)));
 }
 
+function fmtLeadLabel(h) {
+  h = Math.round(h);
+  const d = Math.floor(h / 24), r = h % 24;
+  if (d && r) return `${d}d ${r}h`;
+  if (d) return `${d}d`;
+  return `${r}h`;
+}
+
 function coverageText(value) {
   if (value.coverage == null) return value.source;
   return `${value.partial ? "Partial coverage: " : ""}${value.coverage.toFixed(1)}/24 h; ` +
@@ -799,7 +835,9 @@ function renderForecastTable(wrap, data, param) {
 
 function renderForecastChart(wrap, data, param) {
   const series = data.series.map((s, i) => ({
-    ...s, color: CHART_COLORS[i % CHART_COLORS.length],
+    ...s,
+    color: CHART_COLORS[i % CHART_COLORS.length],
+    markerShape: MARKER_SHAPES[i % MARKER_SHAPES.length],
   })).filter((s) => s.points.some((p) => p.values[param.key]));
 
   let yMin = Infinity, yMax = -Infinity;
@@ -844,11 +882,12 @@ function renderForecastChart(wrap, data, param) {
   const xTicks = xMax === xMin ? [xMin] : niceYTicks(xMin, xMax, 6);
   for (const tick of xTicks) {
     const label = svgEl("text", { x: xS(tick), y: H - MB + 18, class: "fc-chart-tick", "text-anchor": "middle" });
-    label.textContent = fmtLead(tick);
+    label.textContent = fmtLeadLabel(tick);
     svg.append(label);
   }
+  const zeroUTC = fc.target.toISOString().slice(0, 16).replace("T", " ") + " UTC";
   const axisLabel = svgEl("text", { x: ML + cW / 2, y: H - 5, class: "fc-chart-tick", "text-anchor": "middle" });
-  axisLabel.textContent = "Lead time (h) — longest to shortest";
+  axisLabel.textContent = `lead time (0 = ${zeroUTC})`;
   svg.append(axisLabel, svgEl("line", {
     x1: ML, y1: MT + cH, x2: ML + cW, y2: MT + cH, class: "fc-chart-axis",
   }));
@@ -886,12 +925,13 @@ function renderForecastChart(wrap, data, param) {
     const value = point.values[param.key];
     if (!value) continue;
     const description = pointDescription(point, value, param);
-    const marker = svgEl("circle", {
-      cx: xS(point.lead).toFixed(2), cy: yS(value.value).toFixed(2),
-      r: value.partial ? 4.5 : 3.5, fill: s.color,
-      class: value.partial ? "fc-chart-point partial" : "fc-chart-point",
-      tabindex: "0", role: "img", "aria-label": description,
-    });
+    const marker = svgMarker(s.markerShape,
+      +xS(point.lead).toFixed(2), +yS(value.value).toFixed(2),
+      value.partial ? 4.5 : 3.5, {
+        fill: s.color,
+        class: value.partial ? "fc-chart-point partial" : "fc-chart-point",
+        tabindex: "0", role: "img", "aria-label": description,
+      });
     const title = svgEl("title");
     title.textContent = description;
     marker.append(title);
@@ -902,7 +942,7 @@ function renderForecastChart(wrap, data, param) {
   const legend = h("div", { class: "fc-chart-legend" },
     ...series.map((s) => {
       const swatch = svgEl("svg", { viewBox: "0 0 12 12", class: "fc-chart-swatch", "aria-hidden": "true" });
-      swatch.append(svgEl("rect", { width: 12, height: 12, rx: 2, fill: s.color }));
+      swatch.append(svgMarker(s.markerShape, 6, 6, 4, { fill: s.color }));
       return h("span", { class: "fc-chart-legend-item" }, swatch, s.provider);
     }),
     ...obsWithColor.map((obs) => {

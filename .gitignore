@@ -7,7 +7,6 @@ config.yaml
 *.db-wal
 .env
 .venv/
-*.py
 meteocomp.json
 *.bak
 *.json
