@@ -52,7 +52,7 @@ def poll_weatherapi():
         json.dump(dat, f, indent=4)
 
     ret_forecast = None
-    polled_at=datetime.now()    
+    polled_at = datetime.now()
     dat["forecast"]["forecastday"]
     for d in dat["forecast"]["forecastday"]:
         for c in d["hour"]:
@@ -102,7 +102,7 @@ def poll_openweathermap():
         json.dump(dat, f, indent=4)
 
     ret_forecast = None
-    polled_at=datetime.now()    
+    polled_at = datetime.now()
     for c in dat["list"]:
         forecast = Reading(
             provider="owm",
