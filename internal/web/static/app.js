@@ -649,7 +649,10 @@ const fc = {
   target: null,
   leadFcRecords: [],
   leadObsRecords: [],
+  leadKnownConditions: new Map(),
   leadData: null,
+  targetLabel: "",
+  synopLabel: "",
   leadStationFt: null,
   request: 0,
   controller: null,
@@ -686,6 +689,32 @@ function populateFcLocation() {
   }
 }
 
+const fmtUTC = (d) => d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+
+function renderTargetDate() {
+  $("fc-target-date").textContent = [fc.targetLabel, fc.synopLabel].filter(Boolean).join(" · ");
+}
+
+function setTargetLabel(label) {
+  fc.targetLabel = label;
+  renderTargetDate();
+}
+
+// Returns a "Last SYNOP poll" label, or "" when no SYNOP provider is configured.
+async function loadSynopLabel(signal) {
+  const names = new Set(state.providers
+    .filter((p) => p.orig && p.origType === "meteofrance_synop").map((p) => p.orig));
+  if (!names.size) return "";
+  const statuses = await api("GET", "/api/v1/poll-status", undefined, signal);
+  let latest = null;
+  for (const s of Array.isArray(statuses) ? statuses : []) {
+    if (!names.has(s.name) || !s.polled_at) continue;
+    if (!latest || s.polled_at > latest.polled_at) latest = s;
+  }
+  if (!latest) return "Last SYNOP poll: not yet";
+  return `Last SYNOP poll: ${fmtUTC(new Date(latest.polled_at))}${latest.error ? " (failed)" : ""}`;
+}
+
 async function loadForecast() {
   const request = ++fc.request;
   fc.controller?.abort();
@@ -699,6 +728,11 @@ async function loadForecast() {
   }
   wrap.replaceChildren(h("p", { class: "fc-loading" }, "Loading…"));
   const getPage = (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal);
+  loadSynopLabel(controller.signal).then((label) => {
+    if (request !== fc.request) return;
+    fc.synopLabel = label;
+    renderTargetDate();
+  }, () => {});
 
   try {
     if (fc.view === "chart") {
@@ -712,17 +746,19 @@ async function loadForecast() {
         return;
       }
       const stationFt = new Date(rawFt);
-      $("fc-target-date").textContent = `Reference: ${stationFt.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-      const [fcRecs, obsRecs] = await Promise.all([
+      setTargetLabel(`Reference: ${fmtUTC(stationFt)}`);
+      const [fcRecs, obsRecs, knownConditions] = await Promise.all([
         ForecastEvolution.loadLeadRecords(getPage, fc.location, stationFt, "forecast"),
         ForecastEvolution.loadLeadRecords(getPage, fc.location, stationFt, "observation"),
+        ForecastEvolution.loadLatestKnownConditions(getPage, fc.location, stationFt),
       ]);
       if (request !== fc.request) return;
       fc.leadFcRecords = fcRecs;
       fc.leadObsRecords = obsRecs;
+      fc.leadKnownConditions = knownConditions;
       fc.leadStationFt = stationFt;
       const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
-      fc.leadData = ForecastEvolution.buildLeadSeries(fcRecs, obsRecs, param.key);
+      fc.leadData = ForecastEvolution.buildLeadSeries(fcRecs, obsRecs, param.key, knownConditions);
       renderForecastView();
     } else {
       fc.data = null;
@@ -730,7 +766,7 @@ async function loadForecast() {
       fc.obsRecords = [];
       const target = ForecastEvolution.today();
       fc.target = target;
-      $("fc-target-date").textContent = `Today: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
+      setTargetLabel(`Today: ${fmtUTC(new Date())}`);
       const [records, obsRecords] = await Promise.all([
         ForecastEvolution.loadRecords(getPage, fc.location, target),
         ForecastEvolution.loadObservations(getPage, fc.location, target),
@@ -1027,7 +1063,7 @@ function setupForecast() {
     fc.param = e.target.value;
     if (fc.view === "chart" && fc.leadFcRecords.length) {
       const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
-      fc.leadData = ForecastEvolution.buildLeadSeries(fc.leadFcRecords, fc.leadObsRecords, param.key);
+      fc.leadData = ForecastEvolution.buildLeadSeries(fc.leadFcRecords, fc.leadObsRecords, param.key, fc.leadKnownConditions);
       renderForecastView();
     } else {
       renderForecastView();

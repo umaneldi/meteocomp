@@ -58,21 +58,53 @@ const ForecastEvolution = (() => {
     return load(getPage, location, target, "observation", pageSize);
   }
 
+  function isKnownCondition(c) { return c != null && c !== "unknown" && CONDITION_ORDER[c] != null; }
+
+  function isNewer(r, previous) {
+    return !previous || previous.forecast_time < r.forecast_time ||
+      (previous.forecast_time === r.forecast_time && previous.polled_at < r.polled_at);
+  }
+
+  // Returns Map(provider → latest observation with a known condition) within the 24 h before `before`.
+  async function loadLatestKnownConditions(getPage, location, before, pageSize = 1000) {
+    const end = before instanceof Date ? before.getTime() : new Date(before).getTime();
+    const query = new URLSearchParams({
+      location, kind: "observation",
+      from: new Date(end - DAY).toISOString(),
+      to: new Date(end + 1000).toISOString(),
+      limit: String(pageSize), offset: "0",
+    });
+    const latest = new Map();
+    for (;;) {
+      const page = await getPage(query);
+      if (!Array.isArray(page) || page.length > pageSize) throw new Error("Invalid readings response");
+      for (const r of page) {
+        if (new Date(r.forecast_time).getTime() > end) continue;
+        if (isKnownCondition(r.condition) && isNewer(r, latest.get(r.provider))) latest.set(r.provider, r);
+      }
+      if (page.length < pageSize) return latest;
+      query.set("offset", String(Number(query.get("offset")) + page.length));
+    }
+  }
+
   function buildObservation(records, target) {
     const ds = dayStart(target);
     const byProvider = new Map();
+    const knownCondition = new Map();
     for (const r of records) {
       const time = new Date(r.forecast_time).getTime();
       if (r.kind !== "observation" || !Number.isFinite(time) || time < ds || time >= ds + DAY) continue;
-      const previous = byProvider.get(r.provider);
-      if (!previous || previous.forecast_time < r.forecast_time ||
-          (previous.forecast_time === r.forecast_time && previous.polled_at < r.polled_at)) {
-        byProvider.set(r.provider, r);
+      if (isNewer(r, byProvider.get(r.provider))) byProvider.set(r.provider, r);
+      if (isKnownCondition(r.condition) && isNewer(r, knownCondition.get(r.provider))) {
+        knownCondition.set(r.provider, r);
       }
     }
-    return [...byProvider.entries()].map(([provider, latest]) => ({
+    return [...byProvider.entries()].map(([provider, latestAny]) => ({
       provider,
       values: Object.fromEntries(params.map((param) => {
+        // Conditions come from the latest observation whose condition is known.
+        const latest = param.type === "categorical" ? knownCondition.get(provider) : latestAny;
+        if (!latest) return [param.key, null];
         const value = latest[param.key] ?? (param.fallback ? latest[param.fallback] : null);
         const src = { value, source: `Observed at ${latest.forecast_time.slice(11, 16)}Z`, partial: false };
         const catOrd = param.type === "categorical" ? CONDITION_ORDER[value] : undefined;
@@ -197,7 +229,7 @@ const ForecastEvolution = (() => {
     }
   }
 
-  function buildLeadSeries(forecastRecords, obsRecords, paramKey) {
+  function buildLeadSeries(forecastRecords, obsRecords, paramKey, knownConditions = new Map()) {
     const fcByProvider = new Map();
     for (const r of forecastRecords) {
       let v = r[paramKey];
@@ -211,7 +243,13 @@ const ForecastEvolution = (() => {
       .map(([provider, points]) => ({ provider, points: points.sort((a, b) => a.x - b.x) }));
 
     const obsByProvider = new Map();
-    for (const r of obsRecords) {
+    if (paramKey === "condition") {
+      // Use the latest known condition rather than an unfilled "unknown" one.
+      for (const [provider, r] of knownConditions) {
+        obsByProvider.set(provider, { r, v: CONDITION_ORDER[r.condition] });
+      }
+    }
+    for (const r of paramKey === "condition" ? [] : obsRecords) {
       let v = r[paramKey];
       if (v == null) continue;
       if (typeof v === "string") { v = CONDITION_ORDER[v]; if (v == null) continue; }
@@ -232,5 +270,5 @@ const ForecastEvolution = (() => {
     return { series, obsSeries, xMin, xMax };
   }
 
-  return { params, CONDITION_ORDER, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, buildLeadSeries };
+  return { params, CONDITION_ORDER, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, loadLatestKnownConditions, buildLeadSeries };
 })();
