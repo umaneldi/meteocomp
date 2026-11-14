@@ -131,6 +131,7 @@ docker run --rm -p 8080:8080 \
 | `openweathermap` | yes | 3-hourly, 5 days  | —                                |
 | `weatherapi`     | yes | hourly           | global `forecast_days` (capped at 14) |
 | `infoclimat`     | yes | observations     | global `forecast_days` controls lookback |
+| `meteofrance_synop` | no | no readings; fills observation conditions | `max_distance_km` (default 30); global `forecast_days` controls lookback |
 
 `openmeteo` can target any Open-Meteo endpoint with the `endpoint` option (the path after
 `/v1/`): `forecast` (default) blends the best models for each location, while model-specific
@@ -138,6 +139,21 @@ endpoints such as `meteofrance` (Météo-France AROME 2.5 km over France + ARPEG
 `dwd-icon`, `gfs`, `ecmwf` or `metno` return a single weather service's forecast. `models`
 optionally narrows it further (e.g. `arome_france`). Points beyond the models' horizon are dropped.
 Configure several `openmeteo` instances to compare weather services side by side.
+
+`meteofrance_synop` reads Météo-France's SYNOP archive (data.gouv.fr dataset `archive-synop-omm`,
+one gzipped CSV per year, refreshed once a day with observations up to the previous day at 21:00 UTC).
+It **stores no readings**: it is polled at the shared interval like other providers, and its observations
+are used to fill the condition of stored observation readings (e.g. from `infoclimat`) whose condition is
+unknown. Each such reading gets the condition of the nearest SYNOP observation of the same location at most
+1h30 away, with " (SYNOP)" appended to the condition text; existing conditions are kept. The fill runs
+after each SYNOP poll and after every poll of another provider that records observations, using the
+SYNOP data kept in memory, so readings stay in sync automatically. An unchanged file is not downloaded again.
+
+The SYNOP condition is the weather actually reported by the station (WMO present-weather code `ww`: mist,
+fog, rain, snow, thunderstorm...). When no significant weather is reported, it comes from the observed total
+cloud cover; if both are missing the SYNOP observation is not used (common at automatic stations such as
+Paris-Montsouris). Each location uses its `station_id` if it is a SYNOP station (e.g. `07156`), otherwise
+the nearest SYNOP station within `max_distance_km`.
 
 `infoclimat` fetches weather station observations, including sub-hour readings, from Infoclimat
 (https://www.infoclimat.fr/opendata/). All returned data points have `kind=observation`.

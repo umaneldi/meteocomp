@@ -3,6 +3,7 @@ package all
 
 import (
 	_ "github.com/yanndethe/meteocomp/internal/providers/infoclimat"
+	_ "github.com/yanndethe/meteocomp/internal/providers/meteofrancesynop"
 	_ "github.com/yanndethe/meteocomp/internal/providers/openmeteo"
 	_ "github.com/yanndethe/meteocomp/internal/providers/openweathermap"
 	_ "github.com/yanndethe/meteocomp/internal/providers/weatherapi"

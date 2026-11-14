@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -241,4 +242,94 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 		out = out[start:end]
 	}
 	return out, nil
+}
+
+type sourceCondition struct {
+	at   time.Time
+	cond string
+	text string
+}
+
+func (s *SQLDB) FillObservationConditions(ctx context.Context, location string,
+	sources []weather.Forecast, maxGap time.Duration) (int64, error) {
+	var known []sourceCondition
+	for _, f := range sources {
+		if f.Condition != weather.ConditionUnknown && f.Condition != "" {
+			known = append(known, sourceCondition{at: f.ForecastTime.UTC(), cond: string(f.Condition), text: f.ConditionText})
+		}
+	}
+	if len(known) == 0 {
+		return 0, nil
+	}
+	slices.SortFunc(known, func(a, b sourceCondition) int { return a.at.Compare(b.at) })
+	from, to := known[0].at.Add(-maxGap), known[len(known)-1].at.Add(maxGap)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, s.d.rebind(`SELECT DISTINCT forecast_time FROM readings
+		WHERE kind = 'observation' AND location_name = ? AND condition IN ('unknown', '')
+		AND forecast_time >= ? AND forecast_time <= ?`),
+		location, formatTime(from), formatTime(to))
+	if err != nil {
+		return 0, err
+	}
+	var targets []string
+	for rows.Next() {
+		var ts string
+		if err := rows.Scan(&ts); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		targets = append(targets, ts)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	rows.Close()
+
+	stmt, err := tx.PrepareContext(ctx, s.d.rebind(`UPDATE readings SET condition = ?, condition_text = ?
+		WHERE kind = 'observation' AND location_name = ? AND forecast_time = ? AND condition IN ('unknown', '')`))
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+	var updated int64
+	for _, ts := range targets {
+		at, err := parseTime(ts)
+		if err != nil {
+			return 0, err
+		}
+		src, ok := nearestSource(known, at, maxGap)
+		if !ok {
+			continue
+		}
+		res, err := stmt.ExecContext(ctx, src.cond, src.text+" (SYNOP)", location, ts)
+		if err != nil {
+			return 0, fmt.Errorf("update condition: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		updated += n
+	}
+	return updated, tx.Commit()
+}
+
+// nearestSource returns the source closest to at, if at most maxGap away. sources is sorted by time.
+func nearestSource(sources []sourceCondition, at time.Time, maxGap time.Duration) (sourceCondition, bool) {
+	i, _ := slices.BinarySearchFunc(sources, at, func(s sourceCondition, t time.Time) int { return s.at.Compare(t) })
+	best, bestGap := sourceCondition{}, maxGap+1
+	for _, j := range []int{i - 1, i} {
+		if j >= 0 && j < len(sources) {
+			if gap := absDuration(sources[j].at.Sub(at)); gap < bestGap {
+				best, bestGap = sources[j], gap
+			}
+		}
+	}
+	return best, bestGap <= maxGap
 }

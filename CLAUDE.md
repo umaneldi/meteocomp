@@ -42,6 +42,11 @@ database and edited from an embedded web UI.
 - Readings match `Reading` in `proto/global_map.py`, with NULL for missing measurements.
   There are no poll rows, reading IDs, granularity or native daily aggregates.
 - Failed or empty fetches leave no stored timestamp; failures are logged.
+- Only exception to append-only rows: providers implementing `weather.ConditionSource`
+  (`meteofrance_synop`) store no readings. The poller keeps their latest readings in memory and,
+  after their poll and after any poll recording observations, fills stored observations with an
+  unknown/empty condition from the nearest source observation of the same location within 1h30
+  (`Store.FillObservationConditions`, text suffixed " (SYNOP)").
 - Provider tests use `httptest` with JSON fixtures; tests must not hit real APIs.
 
 ## Adding a provider

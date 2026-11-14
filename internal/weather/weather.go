@@ -95,3 +95,11 @@ type BatchProvider interface {
 	// the entire batch request failed; per-location errors are in LocationResult.Err.
 	FetchAll(ctx context.Context, locs []Location) (map[string]LocationResult, error)
 }
+
+// ConditionSource is an optional Provider extension. The poller does not store the
+// readings of such a provider; it uses them to fill the condition of stored
+// observations of the same location that lack one.
+type ConditionSource interface {
+	Provider
+	FillsConditions()
+}

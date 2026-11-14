@@ -189,3 +189,58 @@ func TestSimplifiedSchemaMigration(t *testing.T) {
 		}
 	})
 }
+
+func TestFillObservationConditions(t *testing.T) {
+	forEachBackend(t, func(t *testing.T, s *SQLDB) {
+		ctx := context.Background()
+		day := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+		at := func(h, m int) time.Time { return day.Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute) }
+		obs := func(provider, typ string, ft time.Time, c weather.Condition, text string) ReadingRecord {
+			return ReadingRecord{
+				Provider: provider, ProviderType: typ, LocationName: "paris", PolledAt: day.Add(24 * time.Hour),
+				Forecast: weather.Forecast{Kind: weather.KindObservation, ForecastTime: ft, Condition: c, ConditionText: text},
+			}
+		}
+		ic := func(ft time.Time, c weather.Condition) ReadingRecord { return obs("ic", "infoclimat", ft, c, "") }
+		sources := []weather.Forecast{
+			{ForecastTime: at(15, 0), Condition: weather.ConditionFog, ConditionText: "Fog"},
+			{ForecastTime: at(12, 0), Condition: weather.ConditionRain, ConditionText: "Rain"},
+			{ForecastTime: at(18, 0), Condition: weather.ConditionUnknown},
+		}
+		readings := []ReadingRecord{
+			ic(at(12, 10), weather.ConditionUnknown),
+			ic(at(12, 10), weather.ConditionUnknown),
+			ic(at(13, 20), weather.ConditionUnknown),
+			ic(at(13, 40), weather.ConditionUnknown),
+			ic(at(17, 0), weather.ConditionUnknown),
+			ic(at(12, 20), weather.ConditionCloudy),
+		}
+		if err := s.RecordReadings(ctx, readings); err != nil {
+			t.Fatal(err)
+		}
+		n, err := s.FillObservationConditions(ctx, "paris", sources, 90*time.Minute)
+		if err != nil || n != 4 {
+			t.Fatalf("updated %d, %v; want 4", n, err)
+		}
+		got, err := s.ListReadings(ctx, ReadingFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]string{
+			"12:10": "rain/Rain (SYNOP)", "13:20": "rain/Rain (SYNOP)", "13:40": "fog/Fog (SYNOP)",
+			"17:00": "unknown/", "12:20": "cloudy/",
+		}
+		if len(got) != 6 {
+			t.Fatalf("got %d readings", len(got))
+		}
+		for _, r := range got {
+			key := r.ForecastTime.Format("15:04")
+			if v := string(r.Condition) + "/" + r.ConditionText; v != want[key] {
+				t.Errorf("%s: got %q, want %q", key, v, want[key])
+			}
+		}
+		if n, err := s.FillObservationConditions(ctx, "paris", sources, 90*time.Minute); err != nil || n != 0 {
+			t.Errorf("second fill: %d, %v", n, err)
+		}
+	})
+}

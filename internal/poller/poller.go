@@ -12,6 +12,10 @@ import (
 	"github.com/yanndethe/meteocomp/internal/weather"
 )
 
+// conditionMaxGap is how far a condition source observation may be from an
+// observation whose condition it fills.
+const conditionMaxGap = 90 * time.Minute
+
 // PollStatus is the outcome of the most recent poll attempt for one provider.
 type PollStatus struct {
 	PolledAt time.Time `json:"polled_at"`
@@ -35,6 +39,10 @@ type Poller struct {
 
 	statusMu sync.RWMutex
 	status   map[string]PollStatus
+
+	// sources holds, per location, the latest readings of weather.ConditionSource providers.
+	sourcesMu sync.Mutex
+	sources   map[string][]weather.Forecast
 }
 
 func New(provs []weather.Provider, interval time.Duration, locations []weather.Location, st store.Store, log *slog.Logger) *Poller {
@@ -44,7 +52,7 @@ func New(provs []weather.Provider, interval time.Duration, locations []weather.L
 		mu[p.Name()] = &sync.Mutex{}
 	}
 	return &Poller{providers: provs, interval: interval, locations: locations, store: st, log: log,
-		timeout: time.Minute, mu: mu, status: status}
+		timeout: time.Minute, mu: mu, status: status, sources: map[string][]weather.Forecast{}}
 }
 
 func (p *Poller) setStatus(name string, s PollStatus) {
@@ -197,7 +205,7 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 				log.Info("location poll ok", "forecasts", len(res.Forecasts), "duration", batchEnd.Sub(batchStart))
 			}
 			if res.Err == nil {
-				if err := p.record(ctx, res); err != nil {
+				if err := p.record(ctx, prov, res); err != nil {
 					failures++
 					log.Error("record readings", "error", err)
 				}
@@ -224,7 +232,7 @@ func (p *Poller) PollProvider(ctx context.Context, prov weather.Provider, reason
 			log.Info("location poll ok", "forecasts", len(res.Forecasts), "duration", res.FinishedAt.Sub(res.StartedAt))
 		}
 		if res.Err == nil {
-			if err := p.record(ctx, res); err != nil {
+			if err := p.record(ctx, prov, res); err != nil {
 				failures++
 				log.Error("record readings", "error", err)
 			}
@@ -241,19 +249,59 @@ type fetchResult struct {
 	Err                    error
 }
 
-func (p *Poller) record(ctx context.Context, result fetchResult) error {
+// record stores the readings of result. Readings of a weather.ConditionSource are not
+// stored: they replace the location's condition sources and fill stored observations.
+// Otherwise, observations lacking a condition are filled from the current sources.
+func (p *Poller) record(ctx context.Context, prov weather.Provider, result fetchResult) error {
+	ctx = context.WithoutCancel(ctx)
+	loc := result.Location.Name
+	if _, ok := prov.(weather.ConditionSource); ok {
+		p.sourcesMu.Lock()
+		p.sources[loc] = result.Forecasts
+		p.sourcesMu.Unlock()
+		p.fillConditions(ctx, result.Provider, loc)
+		return nil
+	}
 	readings := make([]store.ReadingRecord, 0, len(result.Forecasts))
+	observations := false
 	for _, forecast := range result.Forecasts {
 		if forecast.Kind == weather.KindForecast && forecast.ForecastTime.Before(result.StartedAt) {
 			continue
 		}
+		observations = observations || forecast.Kind == weather.KindObservation
 		readings = append(readings, store.ReadingRecord{
 			Provider: result.Provider, ProviderType: result.ProviderType,
-			LocationName: result.Location.Name, PolledAt: result.StartedAt,
+			LocationName: loc, PolledAt: result.StartedAt,
 			Forecast: forecast,
 		})
 	}
-	return p.store.RecordReadings(context.WithoutCancel(ctx), readings)
+	if err := p.store.RecordReadings(ctx, readings); err != nil {
+		return err
+	}
+	if observations {
+		p.fillConditions(ctx, result.Provider, loc)
+	}
+	return nil
+}
+
+// fillConditions fills stored observations of loc lacking a condition from its
+// condition sources. Failures are logged, not returned.
+func (p *Poller) fillConditions(ctx context.Context, provider, loc string) {
+	p.sourcesMu.Lock()
+	sources := p.sources[loc]
+	p.sourcesMu.Unlock()
+	if len(sources) == 0 {
+		return
+	}
+	log := p.log.With("provider", provider, "location", loc)
+	n, err := p.store.FillObservationConditions(ctx, loc, sources, conditionMaxGap)
+	if err != nil {
+		log.Warn("fill observation conditions", "error", err)
+		return
+	}
+	if n > 0 {
+		log.Info("observation conditions filled", "readings", n)
+	}
 }
 
 func (p *Poller) fetch(ctx context.Context, prov weather.Provider, loc weather.Location) fetchResult {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -129,5 +130,68 @@ func TestRunResumesFromLastPoll(t *testing.T) {
 	want := recent.Add(time.Hour).Format(time.RFC3339)
 	if !strings.Contains(logs.String(), "next_poll_at="+want) {
 		t.Errorf("expected next_poll_at=%s in:\n%s", want, logs.String())
+	}
+}
+
+type obsProvider struct{ at time.Time }
+
+func (obsProvider) Name() string { return "ic" }
+func (obsProvider) Type() string { return "infoclimat" }
+func (o obsProvider) Fetch(context.Context, weather.Location) ([]weather.Forecast, error) {
+	return []weather.Forecast{{ForecastTime: o.at, Kind: weather.KindObservation, Condition: weather.ConditionUnknown}}, nil
+}
+
+type sourceProvider struct{ at time.Time }
+
+func (sourceProvider) Name() string     { return "synop" }
+func (sourceProvider) Type() string     { return "meteofrance_synop" }
+func (sourceProvider) FillsConditions() {}
+func (s sourceProvider) Fetch(context.Context, weather.Location) ([]weather.Forecast, error) {
+	return []weather.Forecast{{ForecastTime: s.at, Kind: weather.KindObservation,
+		Condition: weather.ConditionSnow, ConditionText: "Snow"}}, nil
+}
+
+func TestConditionSourceFillsWithoutStoring(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(ctx, filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	at := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
+	ic, synop := obsProvider{at: at.Add(40 * time.Minute)}, sourceProvider{at: at}
+	p := New([]weather.Provider{ic, synop, fakeProvider{}}, time.Hour,
+		[]weather.Location{{Name: "paris"}}, st, slog.New(slog.DiscardHandler))
+
+	conditions := func() map[string]int {
+		rs, err := st.ListReadings(ctx, store.ReadingFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int{}
+		for _, r := range rs {
+			out[r.Provider+"/"+string(r.Condition)+"/"+r.ConditionText]++
+		}
+		return out
+	}
+	poll := func(prov weather.Provider) {
+		if failures := p.PollProvider(ctx, prov, ReasonManual); failures != 0 {
+			t.Fatalf("%s: %d failures", prov.Name(), failures)
+		}
+	}
+
+	// An observation stored before the SYNOP poll is filled by it.
+	poll(ic)
+	poll(synop)
+	poll(fakeProvider{})
+	want := map[string]int{"ic/snow/Snow (SYNOP)": 1, "fake/clear/": 1}
+	if got := conditions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after SYNOP poll: %v, want %v", got, want)
+	}
+	// An observation stored after the SYNOP poll is filled from the SYNOP data in memory.
+	poll(ic)
+	want["ic/snow/Snow (SYNOP)"] = 2
+	if got := conditions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after second observation poll: %v, want %v", got, want)
 	}
 }

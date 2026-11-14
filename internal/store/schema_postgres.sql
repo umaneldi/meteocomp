@@ -5,6 +5,8 @@
 -- One row per weather data point. Rows are append-only: every poll stores a new
 -- snapshot so the evolution of a forecast for a given target time can be compared,
 -- and observations can be set against earlier forecasts for the same time.
+-- Exception: an observation whose condition is unknown or empty gets the condition of
+-- the nearest SYNOP observation at most 1h30 away (SYNOP itself stores no readings).
 CREATE TABLE IF NOT EXISTS readings (
     polled_at                     TEXT    NOT NULL,
     provider                      TEXT    NOT NULL,
@@ -36,6 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_readings_provider_loc_time ON readings (provider,
 CREATE INDEX IF NOT EXISTS idx_readings_time ON readings (forecast_time);
 CREATE INDEX IF NOT EXISTS idx_readings_provider_polled ON readings (provider, polled_at);
 CREATE INDEX IF NOT EXISTS idx_readings_kind ON readings (kind);
+CREATE INDEX IF NOT EXISTS idx_readings_kind_loc_time ON readings (kind, location_name, forecast_time);
 
 -- Runtime settings edited from the web UI. Only the latest state is kept.
 -- Known keys: poll_interval (Go duration string, shared by all providers).

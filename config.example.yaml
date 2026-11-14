@@ -24,6 +24,9 @@ locations:
 #   weatherapi      api_key needed;  free plan capped at 3 days (global forecast_days capped at 14)
 #   infoclimat      api_key (token) needed; hourly station observations;
 #                   station_id comes from the location; observation window = global forecast_days
+#   meteofrance_synop  no key; stores no readings: fills the condition of stored observations
+#                   lacking one from Meteo-France SYNOP observed weather (published daily up to the
+#                   previous day); station_id if it is a SYNOP station, else nearest SYNOP station
 providers:
   - name: open-meteo
     type: openmeteo
@@ -51,3 +54,12 @@ providers:
     type: infoclimat
     # api_key: "..."   # Infoclimat token
     enabled: false
+
+  # Meteo-France SYNOP: the weather actually reported by ~190 WMO stations (data.gouv.fr
+  # "archive-synop-omm", no key). Stores no readings; fills the condition of stored observations
+  # that lack one. Locations whose station_id is not a SYNOP station use the nearest SYNOP
+  # station within max_distance_km.
+  - name: synop
+    type: meteofrance_synop
+    options:
+      max_distance_km: 30

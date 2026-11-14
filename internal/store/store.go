@@ -13,6 +13,11 @@ type Store interface {
 	// RecordReadings appends a provider/location snapshot atomically.
 	RecordReadings(ctx context.Context, readings []ReadingRecord) error
 	ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRecord, error)
+	// FillObservationConditions sets the condition of kind=observation readings of
+	// location whose condition is unknown or empty to that of the nearest source
+	// observation with a known condition at most maxGap away. Only readings within
+	// maxGap of a source are considered. It returns the number of rows updated.
+	FillObservationConditions(ctx context.Context, location string, sources []weather.Forecast, maxGap time.Duration) (int64, error)
 	// LatestObservationTimes returns a map from location_name to the greatest
 	// forecast_time found among kind=observation readings for that location.
 	LatestObservationTimes(ctx context.Context) (map[string]time.Time, error)
