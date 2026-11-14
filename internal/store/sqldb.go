@@ -153,6 +153,9 @@ func (s *SQLDB) ListReadings(ctx context.Context, f ReadingFilter) ([]ReadingRec
 	if f.Kind != "" {
 		w.add("kind = ?", f.Kind)
 	}
+	if f.KnownCondition {
+		w.add("condition <> ?", string(weather.ConditionUnknown))
+	}
 	if !f.From.IsZero() {
 		w.add("forecast_time >= ?", formatTime(f.From))
 	}

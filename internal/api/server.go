@@ -185,6 +185,14 @@ func (s *Server) listReadings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	switch v := q.Get("known_condition"); v {
+	case "", "false":
+	case "true":
+		f.KnownCondition = true
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("known_condition: expected true or false, got %q", v))
+		return
+	}
 	if f.Limit, err = parseLimit(q.Get("limit")); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

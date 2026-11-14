@@ -242,5 +242,14 @@ func TestFillObservationConditions(t *testing.T) {
 		if n, err := s.FillObservationConditions(ctx, "paris", sources, 90*time.Minute); err != nil || n != 0 {
 			t.Errorf("second fill: %d, %v", n, err)
 		}
+		known, err := s.ListReadings(ctx, ReadingFilter{KnownCondition: true})
+		if err != nil || len(known) != 5 {
+			t.Fatalf("known_condition filter: %d readings, %v; want 5", len(known), err)
+		}
+		for _, r := range known {
+			if r.Condition == weather.ConditionUnknown {
+				t.Errorf("known_condition filter returned unknown at %s", r.ForecastTime.Format("15:04"))
+			}
+		}
 	})
 }

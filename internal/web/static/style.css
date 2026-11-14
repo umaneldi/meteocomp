@@ -305,6 +305,9 @@ input::placeholder { color: var(--ink-3); }
 .fc-chart-legend-item { display: flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--ink-2); }
 .fc-chart-swatch { width: .75rem; height: .75rem; border-radius: 2px; flex: none; }
 .fc-chart-obs-line { fill: none; stroke-width: 2; stroke-dasharray: 6 4; }
+.fc-chart-obs-condition { stroke-width: 4; }
+.fc-chart-obs-label { font: 700 15px var(--mono); paint-order: stroke; stroke: var(--bg, #fff); stroke-width: 3px; }
+.fc-temp.fc-obs-condition { font-weight: 800; font-size: 1.15rem; }
 .fc-obs-col { border-left: 2px solid var(--rule-strong); }
 .fc-obs-cell { border-left: 2px solid var(--rule); }
 @media (max-width: 720px) {

@@ -213,7 +213,7 @@ a throwaway schema in that database.
 | GET    | `/api/v1/providers`  | |
 | GET    | `/api/v1/locations`  | `latest=true` — returns configured locations augmented with a `latest_forecast_time` field: the greatest observation `forecast_time` for that location (`null` if none). Default omits the field and skips the readings table. |
 | POST   | `/api/v1/polls`      | `provider` (optional) — trigger an immediate poll |
-| GET    | `/api/v1/readings`   | `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `forecast_time` (RFC3339), `limit`, `offset` |
+| GET    | `/api/v1/readings`   | `provider`, `location`, `kind`, `from`, `to`, `polled_from`, `polled_to` (RFC3339), `forecast_time` (RFC3339), `known_condition` (`true` excludes readings with an `unknown` condition), `limit`, `offset` |
 | GET    | `/api/v1/stations`   | `q` (min 2 chars) — search Infoclimat stations by ID or name |
 
 `limit` defaults to 500 (max 10000).

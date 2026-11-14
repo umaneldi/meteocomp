@@ -47,6 +47,8 @@ type ReadingFilter struct {
 	PolledFrom   time.Time
 	PolledTo     time.Time
 	ForecastTime time.Time
-	Limit        int
-	Offset       int
+	// KnownCondition excludes readings whose condition is unknown.
+	KnownCondition bool
+	Limit          int
+	Offset         int
 }

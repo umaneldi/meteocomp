@@ -65,12 +65,11 @@ const ForecastEvolution = (() => {
       (previous.forecast_time === r.forecast_time && previous.polled_at < r.polled_at);
   }
 
-  // Returns Map(provider → latest observation with a known condition) within the 24 h before `before`.
+  // Returns Map(provider → latest observation with a known condition) at or before `before`.
   async function loadLatestKnownConditions(getPage, location, before, pageSize = 1000) {
     const end = before instanceof Date ? before.getTime() : new Date(before).getTime();
     const query = new URLSearchParams({
-      location, kind: "observation",
-      from: new Date(end - DAY).toISOString(),
+      location, kind: "observation", known_condition: "true",
       to: new Date(end + 1000).toISOString(),
       limit: String(pageSize), offset: "0",
     });
@@ -87,7 +86,7 @@ const ForecastEvolution = (() => {
     }
   }
 
-  function buildObservation(records, target) {
+  function buildObservation(records, target, knownConditions = new Map()) {
     const ds = dayStart(target);
     const byProvider = new Map();
     const knownCondition = new Map();
@@ -99,14 +98,20 @@ const ForecastEvolution = (() => {
         knownCondition.set(r.provider, r);
       }
     }
-    return [...byProvider.entries()].map(([provider, latestAny]) => ({
+    for (const [provider, r] of knownConditions) {
+      if (isNewer(r, knownCondition.get(provider))) knownCondition.set(provider, r);
+    }
+    const providers = [...new Set([...byProvider.keys(), ...knownCondition.keys()])];
+    return providers.map((provider) => ({
       provider,
       values: Object.fromEntries(params.map((param) => {
         // Conditions come from the latest observation whose condition is known.
-        const latest = param.type === "categorical" ? knownCondition.get(provider) : latestAny;
+        const latest = (param.type === "categorical" ? knownCondition : byProvider).get(provider);
         if (!latest) return [param.key, null];
         const value = latest[param.key] ?? (param.fallback ? latest[param.fallback] : null);
-        const src = { value, source: `Observed at ${latest.forecast_time.slice(11, 16)}Z`, partial: false };
+        const observedAt = latest.forecast_time.slice(0, 10) === new Date(ds + 12 * HOUR).toISOString().slice(0, 10)
+          ? latest.forecast_time.slice(11, 16) : latest.forecast_time.slice(0, 16).replace("T", " ");
+        const src = { value, source: `Observed at ${observedAt}Z`, partial: false };
         const catOrd = param.type === "categorical" ? CONDITION_ORDER[value] : undefined;
         return [param.key, param.type === "categorical"
           ? (catOrd != null ? { ...src, value: catOrd } : null)
@@ -258,7 +263,7 @@ const ForecastEvolution = (() => {
     }
     const obsSeries = [...obsByProvider.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([provider, { v }]) => ({ provider, y: v }));
+      .map(([provider, { r, v }]) => ({ provider, y: v, time: r.forecast_time }));
 
     let xMin = Infinity, xMax = -Infinity;
     for (const s of series) for (const p of s.points) {

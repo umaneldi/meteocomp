@@ -767,15 +767,16 @@ async function loadForecast() {
       const target = ForecastEvolution.today();
       fc.target = target;
       setTargetLabel(`Today: ${fmtUTC(new Date())}`);
-      const [records, obsRecords] = await Promise.all([
+      const [records, obsRecords, knownConditions] = await Promise.all([
         ForecastEvolution.loadRecords(getPage, fc.location, target),
         ForecastEvolution.loadObservations(getPage, fc.location, target),
+        ForecastEvolution.loadLatestKnownConditions(getPage, fc.location, new Date()),
       ]);
       if (request !== fc.request) return;
       if (target.getTime() !== ForecastEvolution.today().getTime()) { loadForecast(); return; }
       fc.data = ForecastEvolution.build(records, target, state.providers.map((p) => p.name), state.forecastDays * 24);
       fc.obsRecords = obsRecords;
-      fc.observations = ForecastEvolution.buildObservation(obsRecords, target);
+      fc.observations = ForecastEvolution.buildObservation(obsRecords, target, knownConditions);
       renderForecastView();
     }
   } catch (e) {
@@ -888,9 +889,10 @@ function renderForecastTable(wrap, data, param) {
       const value = obs.values[param.key];
       if (!value) return h("td", { class: "fc-cell fc-obs-cell" }, h("span", { class: "fc-empty-cell" }, "—"));
       const color = param.unit === "°C" ? tempClass(value.value) : "mild";
+      const strong = param.type === "categorical" ? " fc-obs-condition" : "";
       return h("td", { class: "fc-cell fc-obs-cell" },
         h("div", { class: "fc-reading", title: `${obs.provider} observation; ${coverageText(value)}` },
-          h("span", { class: `fc-temp ${color}` }, fmtParamValue(value.value, param)),
+          h("span", { class: `fc-temp ${color}${strong}` }, fmtParamValue(value.value, param)),
           h("span", { class: value.partial ? "fc-coverage partial" : "fc-coverage" }, coverageText(value)),
         ),
       );
@@ -997,16 +999,24 @@ function renderForecastChart(wrap, param) {
 
   for (const obs of obsWithColor) {
     const y = yS(obs.y).toFixed(2);
-    const label = `${obs.provider} observation: ${fmtParamValue(obs.y, param)}`;
+    const at = obs.time ? ` (observed ${obs.time.slice(0, 16).replace("T", " ")}Z)` : "";
+    const label = `${obs.provider} observation: ${fmtParamValue(obs.y, param)}${at}`;
     const lineEl = svgEl("line", {
       x1: ML, y1: y, x2: ML + cW, y2: y,
-      class: "fc-chart-obs-line", stroke: obs.color,
+      class: isCategorical ? "fc-chart-obs-line fc-chart-obs-condition" : "fc-chart-obs-line", stroke: obs.color,
       role: "img", "aria-label": label,
     });
     const obsTitle = svgEl("title");
     obsTitle.textContent = label;
     lineEl.append(obsTitle);
     svg.append(lineEl);
+    if (isCategorical) {
+      const text = svgEl("text", {
+        x: ML + cW - 4, y: +y - 7, class: "fc-chart-obs-label", fill: obs.color, "text-anchor": "end",
+      });
+      text.textContent = `Observed: ${fmtParamValue(obs.y, param)}${at}`;
+      svg.append(text);
+    }
   }
 
   const detail = h("p", { class: "hint small fc-chart-detail" }, "Focus or hover a point for details.");
