@@ -654,6 +654,7 @@ const fc = {
   targetLabel: "",
   synopLabel: "",
   leadStationFt: null,
+  focusProvider: null, // chart: only this provider's line is drawn (observations stay)
   request: 0,
   controller: null,
   ready: false,
@@ -912,6 +913,8 @@ function renderForecastChart(wrap, param) {
     color: CHART_COLORS[i % CHART_COLORS.length],
     markerShape: MARKER_SHAPES[i % MARKER_SHAPES.length],
   }));
+  if (!series.some((s) => s.provider === fc.focusProvider)) fc.focusProvider = null;
+  const drawn = fc.focusProvider ? series.filter((s) => s.provider === fc.focusProvider) : series;
   const obsWithColor = obsSeries.map((obs, i) => ({
     ...obs,
     color: CHART_COLORS[(series.length + i) % CHART_COLORS.length],
@@ -986,7 +989,7 @@ function renderForecastChart(wrap, param) {
   svg.append(axisLabel, svgEl("line", { x1: ML, y1: MT + cH, x2: ML + cW, y2: MT + cH, class: "fc-chart-axis" }));
 
   if (!isCategorical) {
-    for (const s of series) {
+    for (const s of drawn) {
       let d = "", gap = true;
       for (const { x, y } of s.points) {
         const sx = xS(x).toFixed(2), sy = yS(y).toFixed(2);
@@ -1022,7 +1025,7 @@ function renderForecastChart(wrap, param) {
   const detail = h("p", { class: "hint small fc-chart-detail" }, "Focus or hover a point for details.");
 
   // Draw markers after paths so single-point series remain visible.
-  for (const s of series) for (const { x, y } of s.points) {
+  for (const s of drawn) for (const { x, y } of s.points) {
     const sx = +xS(x).toFixed(2), sy = +yS(y).toFixed(2);
     const description = `${s.provider}; lead ${fmtLeadLabel(x)}; ${param.label}: ${fmtParamValue(y, param)}`;
     const marker = svgMarker(s.markerShape, sx, sy, 3.5, {
@@ -1040,7 +1043,17 @@ function renderForecastChart(wrap, param) {
     ...series.map((s) => {
       const swatch = svgEl("svg", { viewBox: "0 0 12 12", class: "fc-chart-swatch", "aria-hidden": "true" });
       swatch.append(svgMarker(s.markerShape, 6, 6, 4, { fill: s.color }));
-      return h("span", { class: "fc-chart-legend-item" }, swatch, s.provider);
+      const focused = fc.focusProvider === s.provider;
+      return h("button", {
+        type: "button",
+        class: "fc-chart-legend-item fc-chart-legend-toggle" + (fc.focusProvider && !focused ? " dimmed" : ""),
+        "aria-pressed": String(focused),
+        title: focused ? "Show all providers" : `Show only ${s.provider}`,
+        onclick: () => {
+          fc.focusProvider = focused ? null : s.provider;
+          renderForecastView();
+        },
+      }, swatch, s.provider);
     }),
     ...obsWithColor.map((obs) => {
       const swatch = svgEl("svg", { viewBox: "0 0 24 12", class: "fc-chart-swatch", "aria-hidden": "true" });
