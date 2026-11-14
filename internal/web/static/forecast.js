@@ -3,6 +3,10 @@
 const ForecastEvolution = (() => {
   const HOUR = 3600e3;
   const DAY = 24 * HOUR;
+  const CONDITION_ORDER = {
+    clear: 0, partly_cloudy: 1, cloudy: 2, fog: 3, drizzle: 4,
+    rain: 5, freezing_rain: 6, sleet: 7, snow: 8, thunderstorm: 9, unknown: 10,
+  };
   const params = [
     { key: "temperature_c", label: "Daily mean temperature", unit: "°C", reducer: "mean" },
     { key: "temperature_min_c", label: "Daily minimum temperature", unit: "°C", reducer: "min", fallback: "temperature_c" },
@@ -17,6 +21,7 @@ const ForecastEvolution = (() => {
     { key: "precipitation_probability_pct", label: "Daily maximum rain probability", unit: "%", reducer: "max" },
     { key: "snowfall_cm", label: "Daily snowfall total", unit: "cm", reducer: "sum" },
     { key: "visibility_km", label: "Daily mean visibility", unit: "km", reducer: "mean" },
+    { key: "condition", label: "Condition", unit: "condition", type: "categorical", reducer: "mode" },
   ];
 
   function today(now = new Date()) {
@@ -69,8 +74,11 @@ const ForecastEvolution = (() => {
       provider,
       values: Object.fromEntries(params.map((param) => {
         const value = latest[param.key] ?? (param.fallback ? latest[param.fallback] : null);
-        return [param.key, Number.isFinite(value)
-          ? { value, source: `Observed at ${latest.forecast_time.slice(11, 16)}Z`, partial: false } : null];
+        const src = { value, source: `Observed at ${latest.forecast_time.slice(11, 16)}Z`, partial: false };
+        const catOrd = param.type === "categorical" ? CONDITION_ORDER[value] : undefined;
+        return [param.key, param.type === "categorical"
+          ? (catOrd != null ? { ...src, value: catOrd } : null)
+          : (Number.isFinite(value) ? src : null)];
       })),
     }));
   }
@@ -86,6 +94,16 @@ const ForecastEvolution = (() => {
   }
 
   function dailyValue(slots, param, ds) {
+    if (param.type === "categorical") {
+      const freq = new Map();
+      for (const r of slots) {
+        const ord = CONDITION_ORDER[r[param.key]];
+        if (ord != null) freq.set(ord, (freq.get(ord) || 0) + 1);
+      }
+      if (!freq.size) return null;
+      const mode = [...freq.entries()].reduce((a, b) => b[1] > a[1] ? b : a)[0];
+      return { value: mode, source: "Most common", coverage: null, partial: false };
+    }
     const available = slots.flatMap((r) => {
       const value = r[param.key] ?? (param.fallback ? r[param.fallback] : null);
       if (!Number.isFinite(value)) return [];
@@ -182,8 +200,9 @@ const ForecastEvolution = (() => {
   function buildLeadSeries(forecastRecords, obsRecords, paramKey) {
     const fcByProvider = new Map();
     for (const r of forecastRecords) {
-      const v = r[paramKey];
+      let v = r[paramKey];
       if (v == null) continue;
+      if (typeof v === "string") { v = CONDITION_ORDER[v]; if (v == null) continue; }
       if (!fcByProvider.has(r.provider)) fcByProvider.set(r.provider, []);
       fcByProvider.get(r.provider).push({ x: r.lead_time_hours, y: v });
     }
@@ -193,14 +212,15 @@ const ForecastEvolution = (() => {
 
     const obsByProvider = new Map();
     for (const r of obsRecords) {
-      const v = r[paramKey];
+      let v = r[paramKey];
       if (v == null) continue;
+      if (typeof v === "string") { v = CONDITION_ORDER[v]; if (v == null) continue; }
       const prev = obsByProvider.get(r.provider);
-      if (!prev || r.forecast_time > prev.forecast_time) obsByProvider.set(r.provider, r);
+      if (!prev || r.forecast_time > prev.r.forecast_time) obsByProvider.set(r.provider, { r, v });
     }
     const obsSeries = [...obsByProvider.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([provider, r]) => ({ provider, y: r[paramKey] }));
+      .map(([provider, { v }]) => ({ provider, y: v }));
 
     let xMin = Infinity, xMax = -Infinity;
     for (const s of series) for (const p of s.points) {
@@ -212,5 +232,5 @@ const ForecastEvolution = (() => {
     return { series, obsSeries, xMin, xMax };
   }
 
-  return { params, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, buildLeadSeries };
+  return { params, CONDITION_ORDER, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, buildLeadSeries };
 })();

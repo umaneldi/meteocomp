@@ -41,6 +41,7 @@ function setTab(name) {
 const PARAMS = ForecastEvolution.params;
 
 const CHART_COLORS = ["#e8590c","#1c7ed6","#2f9e44","#9c36b5","#f08c00","#0c8599","#e03131","#364fc7"];
+const CONDITION_LABELS = ["Clear","Partly cloudy","Cloudy","Fog","Drizzle","Rain","Freezing rain","Sleet","Snow","Thunderstorm","Unknown"];
 const MARKER_SHAPES = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -79,6 +80,7 @@ function svgMarker(shape, cx, cy, r, attrs = {}) {
 
 function fmtParamValue(v, param) {
   if (v == null) return "—";
+  if (param.unit === "condition") return CONDITION_LABELS[Math.round(v)] ?? "—";
   if (param.unit === "°C") return `${v > 0 ? "+" : ""}${Math.round(v)}°`;
   if (param.unit === "%")  return `${Math.round(v)}%`;
   if (param.unit === "hPa") return String(Math.round(v));
@@ -888,11 +890,17 @@ function renderForecastChart(wrap, param) {
   }
   if (!Number.isFinite(yMin)) { yMin = 0; yMax = 1; }
   if (yMin === yMax) { yMin -= 1; yMax += 1; }
-  const yPad = (yMax - yMin) * 0.1;
-  yMin -= yPad; yMax += yPad;
+  const isCategorical = param.type === "categorical";
+  if (isCategorical) {
+    yMin = Math.max(0, yMin - 0.5);
+    yMax = Math.min(CONDITION_LABELS.length - 1, yMax + 0.5);
+  } else {
+    const yPad = (yMax - yMin) * 0.1;
+    yMin -= yPad; yMax += yPad;
+  }
 
   const xRange = xMax === xMin ? 1 : xMax - xMin;
-  const W = 800, H = 280, ML = 62, MR = 26, MT = 16, MB = 54;
+  const W = 800, H = 280, ML = isCategorical ? 100 : 62, MR = 26, MT = 16, MB = 54;
   const cW = W - ML - MR, cH = H - MT - MB;
   // Reversed: larger lead time (xMax) on left, smaller (xMin) on right.
   const xS = (lead) => ML + ((xMax - lead) / xRange) * cW;
@@ -903,12 +911,26 @@ function renderForecastChart(wrap, param) {
     "aria-label": `${param.label} by forecast lead time; long-range forecasts left, reference time right`,
   });
 
-  for (const tick of niceYTicks(yMin, yMax, 5)) {
-    const y = yS(tick).toFixed(1);
-    svg.append(svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" }));
-    const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
-    lbl.textContent = fmtParamValue(tick, param);
-    svg.append(lbl);
+  if (isCategorical) {
+    const ordinals = [...new Set([
+      ...series.flatMap((s) => s.points.map((p) => p.y)),
+      ...obsWithColor.map((o) => o.y),
+    ])].sort((a, b) => a - b);
+    for (const ord of ordinals) {
+      const y = yS(ord).toFixed(1);
+      svg.append(svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" }));
+      const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
+      lbl.textContent = CONDITION_LABELS[ord] ?? String(ord);
+      svg.append(lbl);
+    }
+  } else {
+    for (const tick of niceYTicks(yMin, yMax, 5)) {
+      const y = yS(tick).toFixed(1);
+      svg.append(svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" }));
+      const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
+      lbl.textContent = fmtParamValue(tick, param);
+      svg.append(lbl);
+    }
   }
 
   const tickStep = 12;
@@ -925,14 +947,16 @@ function renderForecastChart(wrap, param) {
   axisLabel.textContent = `Lead time (0 = ${zeroUTC})`;
   svg.append(axisLabel, svgEl("line", { x1: ML, y1: MT + cH, x2: ML + cW, y2: MT + cH, class: "fc-chart-axis" }));
 
-  for (const s of series) {
-    let d = "", gap = true;
-    for (const { x, y } of s.points) {
-      const sx = xS(x).toFixed(2), sy = yS(y).toFixed(2);
-      d += gap ? `M${sx} ${sy}` : ` L${sx} ${sy}`;
-      gap = false;
+  if (!isCategorical) {
+    for (const s of series) {
+      let d = "", gap = true;
+      for (const { x, y } of s.points) {
+        const sx = xS(x).toFixed(2), sy = yS(y).toFixed(2);
+        d += gap ? `M${sx} ${sy}` : ` L${sx} ${sy}`;
+        gap = false;
+      }
+      if (d) svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
     }
-    if (d) svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
   }
 
   for (const obs of obsWithColor) {
@@ -991,7 +1015,7 @@ function setupForecast() {
   const paramSel = $("fc-param");
   paramSel.replaceChildren(...PARAMS.map((p) =>
     h("option", { value: p.key, selected: p.key === fc.param },
-      p.unit ? `${p.label} (${p.unit})` : p.label),
+      p.unit && p.unit !== "condition" ? `${p.label} (${p.unit})` : p.label),
   ));
 
   $("fc-location").addEventListener("change", (e) => {
