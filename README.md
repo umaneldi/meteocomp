@@ -60,6 +60,22 @@ asynchronously polled providers may occupy different table rows. Retrievals by t
 provider in the same second share one chart group because readings have no poll IDs.
 All historical readings remain stored and available through the API.
 
+The chart is rendered with [Vega-Lite](https://vega.github.io/vega-lite/), the grammar
+[Altair](https://altair-viz.github.io/) generates. Click a legend entry to show only that
+provider. *Download Vega-Lite JSON* saves the chart spec, with its plot settings and data inline.
+You can open it in the [Vega editor](https://vega.github.io/editor/) or load it in Python:
+
+```python
+import json, altair as alt
+chart = alt.Chart.from_dict(json.load(open("meteocomp-….vl.json")))
+chart.properties(width=800).save("chart.html")
+```
+
+The Vega runtime (vega, vega-lite, vega-embed, vega-interpreter) is not embedded in the binary:
+the browser fetches pinned versions from `cdn.jsdelivr.net`, verified with Subresource Integrity
+hashes (see `index.html`). The chart therefore needs internet access on the client, while the
+table view does not. Vega runs in AST-interpreter mode, so the CSP needs no `unsafe-eval`.
+
 ### API keys from environment variables
 
 Keys can also be supplied through environment variables. When set (non-empty), they are used

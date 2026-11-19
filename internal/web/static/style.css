@@ -293,25 +293,22 @@ input::placeholder { color: var(--ink-3); }
 .fc-empty-cell { color: var(--ink-3); font-size: .8rem; }
 .fc-loading { color: var(--ink-3); padding: 2rem 0; font-style: italic; }
 
-.fc-chart-svg { width: 100%; max-height: 320px; display: block; overflow: visible; }
-.fc-chart-grid { stroke: var(--rule); stroke-width: 1; }
-.fc-chart-axis { stroke: var(--rule-strong); stroke-width: 1; }
-.fc-chart-tick { font: .72rem var(--sans); fill: var(--ink-3); }
-.fc-chart-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
-.fc-chart-point.partial { stroke: var(--ink); stroke-width: 2; }
-.fc-chart-point:focus { outline: 2px solid var(--signal); outline-offset: 3px; }
-.fc-chart-svg ~ .fc-coverage { max-width: none; }
-.fc-chart-legend { display: flex; gap: .9rem; flex-wrap: wrap; margin-top: .85rem; }
-.fc-chart-legend-item { display: flex; align-items: center; gap: .35rem; font-size: .82rem; color: var(--ink-2); }
-.fc-chart-legend-toggle { background: none; border: 0; padding: 0; font: inherit; font-size: .82rem; cursor: pointer; }
-.fc-chart-legend-toggle:hover { color: var(--ink); }
-.fc-chart-legend-toggle[aria-pressed=true] { color: var(--ink); font-weight: 600; }
-.fc-chart-legend-toggle.dimmed { opacity: .4; }
-.fc-chart-legend-toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
-.fc-chart-swatch { width: .75rem; height: .75rem; border-radius: 2px; flex: none; }
-.fc-chart-obs-line { fill: none; stroke-width: 2; stroke-dasharray: 6 4; }
-.fc-chart-obs-condition { stroke-width: 4; }
-.fc-chart-obs-label { font: 700 15px var(--mono); paint-order: stroke; stroke: var(--bg, #fff); stroke-width: 3px; }
+.fc-chart { width: 100%; min-height: 320px; }
+.fc-chart svg { display: block; max-width: 100%; }
+.fc-chart-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: .6rem; }
+.fc-chart-actions .hint { margin: 0; }
+/* vega-tooltip, whose default inline <style> is disabled by the CSP */
+#vg-tooltip-element {
+  visibility: hidden; position: fixed; z-index: 1000; padding: .45rem .6rem;
+  background: var(--card, #fff); color: var(--ink); border: 1px solid var(--rule-strong); border-radius: 4px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, .12); font: .78rem/1.35 var(--sans); pointer-events: none;
+}
+#vg-tooltip-element.visible { visibility: visible; }
+#vg-tooltip-element h2 { margin: 0 0 .3rem; font-size: .85rem; }
+#vg-tooltip-element table { border-spacing: 0; }
+#vg-tooltip-element td { padding: .05rem 0; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+#vg-tooltip-element td.key { color: var(--ink-3); text-align: right; padding-right: .5rem; }
+#vg-tooltip-element td.value { font-family: var(--mono); }
 .fc-temp.fc-obs-condition { font-weight: 800; font-size: 1.15rem; }
 .fc-obs-col { border-left: 2px solid var(--rule-strong); }
 .fc-obs-cell { border-left: 2px solid var(--rule); }

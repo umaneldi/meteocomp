@@ -275,5 +275,104 @@ const ForecastEvolution = (() => {
     return { series, obsSeries, xMin, xMax };
   }
 
-  return { params, CONDITION_ORDER, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, loadLatestKnownConditions, buildLeadSeries };
+  const CONDITION_LABELS = ["Clear", "Partly cloudy", "Cloudy", "Fog", "Drizzle", "Rain",
+    "Freezing rain", "Sleet", "Snow", "Thunderstorm", "Unknown"];
+  const MARKER_SHAPES = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"];
+  const VEGA_LITE_SCHEMA = "https://vega.github.io/schema/vega-lite/v5.json";
+
+  // Returns a self-contained Vega-Lite v5 spec (data inline) for lead series from buildLeadSeries.
+  // The same object is rendered in the UI and downloaded, so it must stay plain JSON.
+  function buildChartSpec(leadData, param, { colors, zeroTime, location = "" } = {}) {
+    const categorical = param.type === "categorical";
+    const fmt = (v) => categorical ? (CONDITION_LABELS[v] ?? String(v)) : v;
+    const values = [];
+    for (const s of leadData.series) for (const p of s.points) {
+      values.push({ kind: "forecast", provider: s.provider, series: s.provider, lead_time_hours: p.x, value: fmt(p.y) });
+    }
+    for (const o of leadData.obsSeries) {
+      values.push({ kind: "observation", provider: o.provider, series: `${o.provider} (obs.)`, observed_at: o.time ? o.time.slice(0, 16).replace("T", " ") + " UTC" : null, value: fmt(o.y) });
+    }
+    const fcNames = leadData.series.map((s) => s.provider);
+    const domain = [...fcNames, ...leadData.obsSeries.map((o) => `${o.provider} (obs.)`)];
+    const palette = colors && colors.length ? colors : ["#4c78a8"];
+    const color = {
+      field: "series", type: "nominal", title: "Provider",
+      scale: { domain, range: domain.map((_, i) => palette[i % palette.length]) },
+    };
+    const shape = {
+      field: "series", type: "nominal", title: "Provider",
+      scale: { domain, range: domain.map((_, i) => i < fcNames.length ? MARKER_SHAPES[i % MARKER_SHAPES.length] : "stroke") },
+    };
+    const zero = zeroTime ? new Date(zeroTime).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "reference time";
+    const unitTitle = param.unit && param.unit !== "condition" ? `${param.label} (${param.unit})` : param.label;
+    const y = categorical
+      ? { field: "value", type: "ordinal", title: unitTitle, sort: CONDITION_LABELS }
+      : { field: "value", type: "quantitative", title: unitTitle, scale: { zero: false } };
+    const valueTip = categorical
+      ? { field: "value", type: "nominal", title: param.label }
+      : { field: "value", type: "quantitative", title: unitTitle, format: ".1f" };
+    // Clicking a legend entry keeps that series opaque; observations always stay visible.
+    const opacity = {
+      condition: [{ param: "focus", value: 1 }, { test: "datum.kind === 'observation'", value: 1 }],
+      value: 0.08,
+    };
+
+    const layer = [
+      {
+        transform: [{ filter: "datum.kind === 'forecast'" }],
+        params: [{ name: "focus", select: { type: "point", fields: ["series"] }, bind: "legend" }],
+        mark: categorical
+          ? { type: "point", filled: true, size: 70 }
+          : { type: "line", strokeWidth: 2.5, point: { filled: true, size: 45 } },
+        encoding: {
+          x: {
+            field: "lead_time_hours", type: "quantitative", title: `Lead time in hours (0 = ${zero})`,
+            scale: { reverse: true, zero: false }, axis: { tickMinStep: 1 },
+          },
+          y, color, shape, opacity,
+          tooltip: [
+            { field: "provider", type: "nominal", title: "Provider" },
+            { field: "lead_time_hours", type: "quantitative", title: "Lead (h)", format: ".1f" },
+            valueTip,
+          ],
+        },
+      },
+      {
+        transform: [{ filter: "datum.kind === 'observation'" }],
+        mark: { type: "rule", strokeDash: [5, 3], strokeWidth: categorical ? 4 : 2 },
+        encoding: {
+          y, color, opacity,
+          tooltip: [
+            { field: "series", type: "nominal", title: "Observation" },
+            { field: "observed_at", type: "nominal", title: "Observed at" },
+            valueTip,
+          ],
+        },
+      },
+    ];
+    if (categorical) {
+      layer.push({
+        transform: [{ filter: "datum.kind === 'observation'" }],
+        mark: { type: "text", align: "right", dx: -4, dy: -9, fontWeight: "bold", fontSize: 14 },
+        encoding: {
+          x: { value: "width" }, y, color,
+          text: { field: "value", type: "nominal" },
+        },
+      });
+    }
+
+    return {
+      $schema: VEGA_LITE_SCHEMA,
+      title: {
+        text: location ? `${param.label} forecast evolution: ${location}` : `${param.label} forecast evolution`,
+        subtitle: `Forecasts for ${zero} by lead time; dashed lines are observations`,
+      },
+      width: "container",
+      height: 280,
+      data: { values },
+      layer,
+    };
+  }
+
+  return { params, CONDITION_ORDER, CONDITION_LABELS, buildChartSpec, today, loadRecords, loadObservations, buildObservation, build, findLatestObsTime, loadLeadRecords, loadLatestKnownConditions, buildLeadSeries };
 })();

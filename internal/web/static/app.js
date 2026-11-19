@@ -41,42 +41,7 @@ function setTab(name) {
 const PARAMS = ForecastEvolution.params;
 
 const CHART_COLORS = ["#e8590c","#1c7ed6","#2f9e44","#9c36b5","#f08c00","#0c8599","#e03131","#364fc7"];
-const CONDITION_LABELS = ["Clear","Partly cloudy","Cloudy","Fog","Drizzle","Rain","Freezing rain","Sleet","Snow","Thunderstorm","Unknown"];
-const MARKER_SHAPES = ["circle", "square", "diamond", "triangle-up", "cross", "triangle-down"];
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function svgEl(tag, attrs = {}) {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v));
-  return el;
-}
-
-function svgMarker(shape, cx, cy, r, attrs = {}) {
-  if (shape === "circle") return svgEl("circle", { cx, cy, r, ...attrs });
-  let d;
-  switch (shape) {
-    case "square":
-      d = `M${cx - r} ${cy - r} h${2 * r} v${2 * r} h${-2 * r} Z`;
-      break;
-    case "diamond":
-      d = `M${cx} ${cy - r * 1.2} L${cx + r * 1.2} ${cy} L${cx} ${cy + r * 1.2} L${cx - r * 1.2} ${cy} Z`;
-      break;
-    case "triangle-up":
-      d = `M${cx} ${cy - r} L${cx + r * 0.866} ${cy + r * 0.5} L${cx - r * 0.866} ${cy + r * 0.5} Z`;
-      break;
-    case "cross": {
-      const t = r * 0.4;
-      d = `M${cx - r} ${cy - t} H${cx + r} V${cy + t} H${cx - r} Z M${cx - t} ${cy - r} V${cy + r} H${cx + t} V${cy - r} Z`;
-      break;
-    }
-    case "triangle-down":
-      d = `M${cx} ${cy + r} L${cx + r * 0.866} ${cy - r * 0.5} L${cx - r * 0.866} ${cy - r * 0.5} Z`;
-      break;
-    default:
-      return svgEl("circle", { cx, cy, r, ...attrs });
-  }
-  return svgEl("path", { d, ...attrs });
-}
+const CONDITION_LABELS = ForecastEvolution.CONDITION_LABELS;
 
 function fmtParamValue(v, param) {
   if (v == null) return "—";
@@ -88,17 +53,6 @@ function fmtParamValue(v, param) {
   if (param.unit === "km/h") return `${Math.round(v)} km/h`;
   if (param.unit === "km")   return `${v.toFixed(1)} km`;
   return v.toFixed(1);
-}
-
-function niceYTicks(min, max, count) {
-  const range = max - min || 1;
-  const raw = range / count;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const nice = [1, 2, 2.5, 5, 10].find(f => f * mag >= raw) * mag;
-  const start = Math.ceil(min / nice) * nice;
-  const ticks = [];
-  for (let t = start; t <= max + nice * 0.01; t = parseFloat((t + nice).toFixed(10))) ticks.push(t);
-  return ticks;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -654,7 +608,7 @@ const fc = {
   targetLabel: "",
   synopLabel: "",
   leadStationFt: null,
-  focusProvider: null, // chart: only this provider's line is drawn (observations stay)
+  chartView: null, // live Vega view, finalized before re-rendering
   request: 0,
   controller: null,
   ready: false,
@@ -727,6 +681,7 @@ async function loadForecast() {
     wrap.replaceChildren(h("p", { class: "empty" }, "Select a location above to view forecast data."));
     return;
   }
+  finalizeChart();
   wrap.replaceChildren(h("p", { class: "fc-loading" }, "Loading…"));
   const getPage = (query) => api("GET", `/api/v1/readings?${query}`, undefined, controller.signal);
   loadSynopLabel(controller.signal).then((label) => {
@@ -803,15 +758,6 @@ function fmtLead(lead) {
   return String(Number(lead.toFixed(6)));
 }
 
-function fmtLeadLabel(h) {
-  const sign = h < 0 ? "-" : "";
-  h = Math.abs(Math.round(h));
-  const d = Math.floor(h / 24), r = h % 24;
-  if (d && r) return `${sign}${d}d ${r}h`;
-  if (d) return `${sign}${d}d`;
-  return `${sign}${r}h`;
-}
-
 function coverageText(value) {
   if (value.coverage == null) return value.source;
   return `${value.partial ? "Partial coverage: " : ""}${value.coverage.toFixed(1)}/24 h; ` +
@@ -825,6 +771,7 @@ function pointDescription(point, value, param) {
 
 function renderForecastView() {
   const wrap = $("fc-wrap");
+  if (fc.view !== "chart") finalizeChart();
   const param = PARAMS.find((p) => p.key === fc.param) || PARAMS[0];
   if (fc.view === "chart") {
     if (!fc.leadData) return;
@@ -905,164 +852,80 @@ function renderForecastTable(wrap, data, param) {
   ));
 }
 
+function chartTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  const font = v("--sans");
+  return {
+    background: null,
+    font,
+    title: { color: v("--ink"), subtitleColor: v("--ink-3"), anchor: "start", fontSize: 14 },
+    axis: {
+      labelColor: v("--ink-3"), titleColor: v("--ink-2"), gridColor: v("--rule"),
+      domainColor: v("--rule-strong"), tickColor: v("--rule-strong"), titleFontWeight: "normal",
+    },
+    legend: { labelColor: v("--ink-2"), titleColor: v("--ink-2"), orient: "bottom", direction: "horizontal", columns: 4 },
+    view: { stroke: null },
+  };
+}
+
+function finalizeChart() {
+  fc.chartView?.finalize();
+  fc.chartView = null;
+}
+
+function chartFileName(param) {
+  const safe = (s) => s.replace(/[^\w.-]+/g, "_");
+  const day = (fc.leadStationFt || new Date()).toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+  return `meteocomp-${safe(fc.location)}-${param.key}-${day}.vl.json`;
+}
+
+function downloadJSON(obj, name) {
+  const blob = new Blob([JSON.stringify(obj, null, 2) + "\n"], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function renderForecastChart(wrap, param) {
-  const { series: fcSeries, obsSeries, xMin, xMax } = fc.leadData;
-
-  const series = fcSeries.map((s, i) => ({
-    ...s,
-    color: CHART_COLORS[i % CHART_COLORS.length],
-    markerShape: MARKER_SHAPES[i % MARKER_SHAPES.length],
-  }));
-  if (!series.some((s) => s.provider === fc.focusProvider)) fc.focusProvider = null;
-  const drawn = fc.focusProvider ? series.filter((s) => s.provider === fc.focusProvider) : series;
-  const obsWithColor = obsSeries.map((obs, i) => ({
-    ...obs,
-    color: CHART_COLORS[(series.length + i) % CHART_COLORS.length],
-  }));
-
-  let yMin = Infinity, yMax = -Infinity;
-  for (const s of series) for (const p of s.points) {
-    yMin = Math.min(yMin, p.y);
-    yMax = Math.max(yMax, p.y);
-  }
-  for (const obs of obsWithColor) {
-    yMin = Math.min(yMin, obs.y);
-    yMax = Math.max(yMax, obs.y);
-  }
-  if (!Number.isFinite(yMin)) { yMin = 0; yMax = 1; }
-  if (yMin === yMax) { yMin -= 1; yMax += 1; }
-  const isCategorical = param.type === "categorical";
-  if (isCategorical) {
-    yMin = Math.max(0, yMin - 0.5);
-    yMax = Math.min(CONDITION_LABELS.length - 1, yMax + 0.5);
-  } else {
-    const yPad = (yMax - yMin) * 0.1;
-    yMin -= yPad; yMax += yPad;
-  }
-
-  const xRange = xMax === xMin ? 1 : xMax - xMin;
-  const W = 800, H = 280, ML = isCategorical ? 100 : 62, MR = 26, MT = 16, MB = 54;
-  const cW = W - ML - MR, cH = H - MT - MB;
-  // Reversed: larger lead time (xMax) on left, smaller (xMin) on right.
-  const xS = (lead) => ML + ((xMax - lead) / xRange) * cW;
-  const yS = (v) => MT + (1 - (v - yMin) / (yMax - yMin)) * cH;
-
-  const svg = svgEl("svg", {
-    viewBox: `0 0 ${W} ${H}`, class: "fc-chart-svg", role: "img",
-    "aria-label": `${param.label} by forecast lead time; long-range forecasts left, reference time right`,
+  const spec = ForecastEvolution.buildChartSpec(fc.leadData, param, {
+    colors: CHART_COLORS, zeroTime: fc.leadStationFt, location: fc.location,
   });
-
-  if (isCategorical) {
-    const ordinals = [...new Set([
-      ...series.flatMap((s) => s.points.map((p) => p.y)),
-      ...obsWithColor.map((o) => o.y),
-    ])].sort((a, b) => a - b);
-    for (const ord of ordinals) {
-      const y = yS(ord).toFixed(1);
-      svg.append(svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" }));
-      const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
-      lbl.textContent = CONDITION_LABELS[ord] ?? String(ord);
-      svg.append(lbl);
-    }
-  } else {
-    for (const tick of niceYTicks(yMin, yMax, 5)) {
-      const y = yS(tick).toFixed(1);
-      svg.append(svgEl("line", { x1: ML, y1: y, x2: ML + cW, y2: y, class: "fc-chart-grid" }));
-      const lbl = svgEl("text", { x: ML - 6, y, class: "fc-chart-tick", "text-anchor": "end", "dominant-baseline": "middle" });
-      lbl.textContent = fmtParamValue(tick, param);
-      svg.append(lbl);
-    }
-  }
-
-  const tickStep = 12;
-  const firstTick = Math.ceil(xMin / tickStep) * tickStep;
-  for (let t = firstTick; t <= xMax + 0.01; t += tickStep) {
-    const x = xS(t).toFixed(1);
-    const lbl = svgEl("text", { x, y: H - MB + 18, class: "fc-chart-tick", "text-anchor": "middle" });
-    lbl.textContent = fmtLeadLabel(t);
-    svg.append(lbl);
-  }
-
-  const zeroUTC = fc.leadStationFt.toISOString().slice(0, 16).replace("T", " ") + " UTC";
-  const axisLabel = svgEl("text", { x: ML + cW / 2, y: H - 5, class: "fc-chart-tick", "text-anchor": "middle" });
-  axisLabel.textContent = `Lead time (0 = ${zeroUTC})`;
-  svg.append(axisLabel, svgEl("line", { x1: ML, y1: MT + cH, x2: ML + cW, y2: MT + cH, class: "fc-chart-axis" }));
-
-  if (!isCategorical) {
-    for (const s of drawn) {
-      let d = "", gap = true;
-      for (const { x, y } of s.points) {
-        const sx = xS(x).toFixed(2), sy = yS(y).toFixed(2);
-        d += gap ? `M${sx} ${sy}` : ` L${sx} ${sy}`;
-        gap = false;
-      }
-      if (d) svg.append(svgEl("path", { d, class: "fc-chart-line", stroke: s.color }));
-    }
-  }
-
-  for (const obs of obsWithColor) {
-    const y = yS(obs.y).toFixed(2);
-    const at = obs.time ? ` (observed ${obs.time.slice(0, 16).replace("T", " ")}Z)` : "";
-    const label = `${obs.provider} observation: ${fmtParamValue(obs.y, param)}${at}`;
-    const lineEl = svgEl("line", {
-      x1: ML, y1: y, x2: ML + cW, y2: y,
-      class: isCategorical ? "fc-chart-obs-line fc-chart-obs-condition" : "fc-chart-obs-line", stroke: obs.color,
-      role: "img", "aria-label": label,
-    });
-    const obsTitle = svgEl("title");
-    obsTitle.textContent = label;
-    lineEl.append(obsTitle);
-    svg.append(lineEl);
-    if (isCategorical) {
-      const text = svgEl("text", {
-        x: ML + cW - 4, y: +y - 7, class: "fc-chart-obs-label", fill: obs.color, "text-anchor": "end",
-      });
-      text.textContent = `Observed: ${fmtParamValue(obs.y, param)}${at}`;
-      svg.append(text);
-    }
-  }
-
-  const detail = h("p", { class: "hint small fc-chart-detail" }, "Focus or hover a point for details.");
-
-  // Draw markers after paths so single-point series remain visible.
-  for (const s of drawn) for (const { x, y } of s.points) {
-    const sx = +xS(x).toFixed(2), sy = +yS(y).toFixed(2);
-    const description = `${s.provider}; lead ${fmtLeadLabel(x)}; ${param.label}: ${fmtParamValue(y, param)}`;
-    const marker = svgMarker(s.markerShape, sx, sy, 3.5, {
-      fill: s.color, class: "fc-chart-point", tabindex: "0", role: "img", "aria-label": description,
-    });
-    const title = svgEl("title");
-    title.textContent = description;
-    marker.append(title);
-    marker.addEventListener("focus", () => { detail.textContent = description; });
-    marker.addEventListener("mouseenter", () => { detail.textContent = description; });
-    svg.append(marker);
-  }
-
-  const legend = h("div", { class: "fc-chart-legend" },
-    ...series.map((s) => {
-      const swatch = svgEl("svg", { viewBox: "0 0 12 12", class: "fc-chart-swatch", "aria-hidden": "true" });
-      swatch.append(svgMarker(s.markerShape, 6, 6, 4, { fill: s.color }));
-      const focused = fc.focusProvider === s.provider;
-      return h("button", {
-        type: "button",
-        class: "fc-chart-legend-item fc-chart-legend-toggle" + (fc.focusProvider && !focused ? " dimmed" : ""),
-        "aria-pressed": String(focused),
-        title: focused ? "Show all providers" : `Show only ${s.provider}`,
-        onclick: () => {
-          fc.focusProvider = focused ? null : s.provider;
-          renderForecastView();
-        },
-      }, swatch, s.provider);
-    }),
-    ...obsWithColor.map((obs) => {
-      const swatch = svgEl("svg", { viewBox: "0 0 24 12", class: "fc-chart-swatch", "aria-hidden": "true" });
-      swatch.append(svgEl("line", { x1: 2, y1: 6, x2: 22, y2: 6, stroke: obs.color, "stroke-width": 2.5, "stroke-dasharray": "5 3" }));
-      return h("span", { class: "fc-chart-legend-item" }, swatch, `${obs.provider} (obs.)`);
-    }),
+  const chart = h("div", { class: "fc-chart", role: "img",
+    "aria-label": `${param.label} by forecast lead time; long-range forecasts left, reference time right` });
+  const actions = h("div", { class: "fc-chart-actions" },
+    h("p", { class: "hint small" }, "Hover a point for details. Click a legend entry to show only that provider; click it again to show all."),
+    h("button", {
+      type: "button", class: "btn ghost",
+      title: "Vega-Lite spec with the plot settings and data; load in Python with alt.Chart.from_dict(json.load(f))",
+      onclick: () => downloadJSON(spec, chartFileName(param)),
+    }, "Download Vega-Lite JSON"),
   );
-
-  wrap.replaceChildren(svg, legend, detail);
+  finalizeChart();
+  wrap.replaceChildren(chart, actions);
+  if (typeof vegaEmbed !== "function" || typeof vega?.expressionInterpreter !== "object") {
+    chart.replaceChildren(h("p", { class: "empty", role: "alert" },
+      "Could not load the charting library from cdn.jsdelivr.net. The JSON download still works."));
+    return;
+  }
+  // Clone: vega-embed may annotate the spec it is given, while the download must stay pristine.
+  vegaEmbed(chart, structuredClone(spec), {
+    renderer: "svg",
+    actions: false,
+    ast: true,
+    expr: vega.expressionInterpreter,
+    defaultStyle: false,
+    tooltip: { disableDefaultStyle: true },
+    config: chartTheme(),
+  }).then((result) => {
+    if (chart.isConnected) fc.chartView = result.view;
+    else result.finalize();
+  }, (e) => {
+    chart.replaceChildren(h("p", { class: "empty", role: "alert" }, `Could not render chart: ${e.message}`));
+  });
 }
 
 function setupForecast() {

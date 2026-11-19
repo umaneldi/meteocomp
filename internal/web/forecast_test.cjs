@@ -153,3 +153,54 @@ test("pagination surfaces failed pages and malformed responses", async () => {
   await assert.rejects(evolution.loadRecords(async () => ({}), "test", target), /Invalid readings response/);
   await assert.rejects(evolution.loadRecords(async () => [reading(), reading()], "test", target, 1), /Invalid readings response/);
 });
+
+test("chart spec is a self-contained Vega-Lite spec with inline data and legend focus", () => {
+  const lead = evolution.buildLeadSeries(
+    [
+      { provider: "b", lead_time_hours: 24, temperature_c: 9 },
+      { provider: "a", lead_time_hours: 48, temperature_c: 7.5 },
+      { provider: "a", lead_time_hours: 12, temperature_c: 8 },
+    ],
+    [{ provider: "station", forecast_time: "2026-11-05T12:00:00Z", temperature_c: 8.4 }],
+    "temperature_c",
+  );
+  const param = evolution.params.find((p) => p.key === "temperature_c");
+  const spec = plain(evolution.buildChartSpec(lead, param, {
+    colors: ["#111111", "#222222"], zeroTime: target, location: "Paris",
+  }));
+  assert.match(spec.$schema, /vega-lite\/v5/);
+  assert.deepEqual(spec.data.values, [
+    { kind: "forecast", provider: "a", series: "a", lead_time_hours: 12, value: 8 },
+    { kind: "forecast", provider: "a", series: "a", lead_time_hours: 48, value: 7.5 },
+    { kind: "forecast", provider: "b", series: "b", lead_time_hours: 24, value: 9 },
+    { kind: "observation", provider: "station", series: "station (obs.)", observed_at: "2026-11-05 12:00 UTC", value: 8.4 },
+  ]);
+  const [fcLayer, obsLayer] = spec.layer;
+  assert.equal(spec.layer.length, 2);
+  assert.equal(fcLayer.encoding.x.scale.reverse, true);
+  assert.match(fcLayer.encoding.x.title, /0 = 2026-11-05 12:00 UTC/);
+  assert.equal(fcLayer.encoding.y.type, "quantitative");
+  assert.deepEqual(fcLayer.encoding.color.scale, {
+    domain: ["a", "b", "station (obs.)"], range: ["#111111", "#222222", "#111111"],
+  });
+  assert.deepEqual(fcLayer.encoding.shape.scale.range, ["circle", "square", "stroke"]);
+  assert.deepEqual(fcLayer.params, [{ name: "focus", select: { type: "point", fields: ["series"] }, bind: "legend" }]);
+  assert.equal(obsLayer.mark.type, "rule");
+  assert.match(spec.title.text, /Paris/);
+});
+
+test("categorical chart spec uses condition labels on an ordinal axis", () => {
+  const lead = evolution.buildLeadSeries(
+    [{ provider: "a", lead_time_hours: 6, condition: "rain" }],
+    [],
+    "condition",
+    new Map([["station", { provider: "station", forecast_time: "2026-11-05T11:00:00Z", condition: "cloudy" }]]),
+  );
+  const param = evolution.params.find((p) => p.key === "condition");
+  const spec = plain(evolution.buildChartSpec(lead, param, { colors: ["#111111"] }));
+  assert.deepEqual(spec.data.values.map((v) => v.value), ["Rain", "Cloudy"]);
+  assert.equal(spec.layer[0].encoding.y.type, "ordinal");
+  assert.deepEqual(spec.layer[0].encoding.y.sort, plain(evolution.CONDITION_LABELS));
+  assert.equal(spec.layer[0].mark.type, "point");
+  assert.equal(spec.layer.length, 3);
+});
