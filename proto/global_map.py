@@ -1,8 +1,36 @@
 import json
+import os
 from datetime import datetime
+from pathlib import Path
 
 import requests
 from pydantic import BaseModel
+
+DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
+
+def load_dotenv(path: Path = DOTENV_PATH) -> None:
+    """Load KEY=VALUE lines from a .env file into os.environ (existing vars win)."""
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip().strip("'\"")
+        os.environ.setdefault(key, value)
+
+
+def require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Missing environment variable {name} (set it in .env)")
+    return value
+
+
+load_dotenv()
 
 
 class Reading(BaseModel):
@@ -40,7 +68,7 @@ def poll_weatherapi():
     res = requests.get(
         "http://api.weatherapi.com/v1/forecast.json",
         params={
-            "key": "b55668ef36f5492b8a5151801260211",
+            "key": require_env("WEATHER_API_KEY"),
             "q": "castanet-tolosan",
             "aqi": "no",
             "alerts": "no",
@@ -94,7 +122,7 @@ def poll_openweathermap():
             "lat": "43.5167",
             "lon": "1.5",
             "cnt": "7",
-            "appid": "8775c732c62b9a48c8c8cb5a39ae5f61",
+            "appid": require_env("OWM_API_KEY"),
         },
     )
     dat = res.json()
@@ -159,7 +187,7 @@ def poll_infoclimat():
             "stations[]": "000PU",
             "start": "2026-11-09",
             "end": "2026-11-09",
-            "token": "NQMCcJA55Aiydb0RdimRZLGo37wa95rnhU7Fzx4jKVN48MWzCYRYA",
+            "token": require_env("INFOCLIMAT_API_KEY"),
         },
     )
     dat = res.json()
